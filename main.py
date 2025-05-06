@@ -21,7 +21,10 @@ try:
     from views.worker_view import WorkerView
     from views.user_admin_view import UserAdminView
     from views.dashboard_view import DashboardView
+    from views.client_view import ClientView  # Nueva importación para el módulo de clientes
     from models.user import User
+    # Importar la nueva clase de preferencias de usuario
+    from user_preferences import UserPreferences
 except ImportError as e:
     print(f"Error de importación: {e}")
     # Crear directorios necesarios si no existen
@@ -39,6 +42,7 @@ class ISMV3App(ctk.CTk):
         
         # Estado de la aplicación
         self.current_user: Optional[User] = None
+        self.user_preferences = None
         
         # Cargar tema personalizado
         self._load_custom_theme()
@@ -113,6 +117,13 @@ class ISMV3App(ctk.CTk):
             is_active=user_data.get('is_active', True)
         )
         
+        # Inicializar preferencias de usuario
+        self.user_preferences = UserPreferences(self.current_user.username)
+        
+        # Aplicar tema según preferencias
+        theme = self.user_preferences.get_theme()
+        ctk.set_appearance_mode(theme)
+        
         # Mostrar ventana principal
         self.deiconify()
         
@@ -135,9 +146,12 @@ class ISMV3App(ctk.CTk):
         # Menú lateral
         self._create_sidebar()
         
-        # Contenedor principal para los frames
+        # MODIFICADO: Contenedor principal para los frames ahora es un frame normal
+        # (los frames dentro serán scrollables)
         self.main_view = ctk.CTkFrame(self)
         self.main_view.grid(row=1, column=1, sticky="nsew", padx=20, pady=(0, 20))
+        self.main_view.grid_rowconfigure(0, weight=1)  # Para que el contenido se expanda
+        self.main_view.grid_columnconfigure(0, weight=1)  # Para que el contenido se expanda
         
         # Estado e información (barra inferior)
         self._create_status_bar()
@@ -168,6 +182,17 @@ class ISMV3App(ctk.CTk):
                    font=ctk.CTkFont(size=10)).grid(
                        row=0, column=0, padx=(60, 0), pady=5, sticky="w")
         
+        # NUEVO: Botón para alternar tema
+        theme_btn = ctk.CTkButton(
+            top_bar,
+            text="🌓",
+            width=30,
+            command=self._toggle_theme,
+            fg_color=("gray75", "gray30"),
+            hover_color=("gray65", "gray40")
+        )
+        theme_btn.grid(row=0, column=1, padx=10, pady=5, sticky="e")
+        
         # Widget de usuario activo (derecha)
         user_frame = ctk.CTkFrame(top_bar, fg_color=("gray80", "gray25"))
         user_frame.grid(row=0, column=2, padx=10, pady=5, sticky="e")
@@ -184,7 +209,7 @@ class ISMV3App(ctk.CTk):
             user_menu_btn.pack(side="left", padx=5, pady=2)
     
     def _create_sidebar(self):
-        """Crea el menú lateral con mejoras visuales."""
+        """Crea el menú lateral con mejoras visuales y personalizable."""
         # Frame base con gradiente
         self.sidebar = ctk.CTkFrame(self, width=220, corner_radius=0, fg_color=("#1E3D58", "#1E3D58"))
         self.sidebar.grid(row=1, column=0, sticky="nsew")
@@ -212,40 +237,60 @@ class ISMV3App(ctk.CTk):
         # Separador
         ctk.CTkFrame(self.sidebar, height=1, fg_color="#43B0F1").pack(fill="x", padx=20)
         
-        # Sección 1: General
-        self._add_menu_section("GENERAL", "#E8E8E8")
-        self._add_menu_button("dashboard", "📊  Dashboard", lambda: self.show_frame("dashboard"))
+        # MODIFICADO: Convertir el contenedor de menú en scrollable para soportar muchos elementos
+        menu_scroll = ctk.CTkScrollableFrame(self.sidebar, fg_color="transparent")
+        menu_scroll.pack(fill="both", expand=True, padx=5, pady=5)
         
-        # Sección 2: Operaciones
-        self._add_menu_section("OPERACIONES", "#E8E8E8")
-        self._add_menu_button("weighing", "⚖️  Pesajes", lambda: self.show_frame("weighing"))
-        self._add_menu_button("transactions", "💰  Transacciones", lambda: self.show_frame("transactions"))
+        # Inicializar diccionario de botones del menú
+        self.menu_buttons = {}
         
-        # Sección 3: Entidades
-        self._add_menu_section("ENTIDADES", "#E8E8E8")
-        self._add_menu_button("workers", "👷  Trabajadores", lambda: self.show_frame("workers"))
-        self._add_menu_button("clients", "🏢  Clientes", lambda: self.show_frame("clients"))
-        self._add_menu_button("materials", "📦  Materiales", lambda: self.show_frame("materials"))
+        # Obtener estructura del menú de las preferencias del usuario
+        menu_structure = self.user_preferences.get_menu_order()
         
-        # Sección 4: Administración (solo para admin)
-        if self.current_user and self.current_user.role == "admin":
-            self._add_menu_section("ADMINISTRACIÓN", "#E8E8E8")
-            self._add_menu_button("users", "👥  Usuarios", lambda: self.show_frame("users"))
-            self._add_menu_button("settings", "⚙️  Configuración", lambda: self.show_frame("settings"))
+        # Crear menú según preferencias del usuario
+        for section, items in menu_structure.items():
+            # No mostrar sección de administración si no es admin
+            if section == "ADMINISTRACIÓN" and (not self.current_user or self.current_user.role != "admin"):
+                continue
+                
+            # Añadir sección
+            self._add_menu_section(menu_scroll, section, "#E8E8E8")
+            
+            # Añadir elementos de la sección
+            for item in items:
+                # Solo mostrar elementos de administración si es admin
+                if item["id"] in ["users", "settings"] and (not self.current_user or self.current_user.role != "admin"):
+                    continue
+                    
+                # Usar función lambda con parámetro predefinido para cada botón
+                cmd = lambda id=item["id"]: self.show_frame(id)
+                self._add_menu_button(menu_scroll, item["id"], item["text"], cmd)
+        
+        # Bottom buttons frame
+        bottom_frame = ctk.CTkFrame(self.sidebar, fg_color="transparent")
+        bottom_frame.pack(side="bottom", fill="x", pady=10)
+        
+        # NUEVO: Botón para personalizar menú
+        customize_btn = ctk.CTkButton(
+            bottom_frame,
+            text="⚙️ Personalizar menú",
+            command=self._show_menu_customizer,
+            fg_color="#43B0F1",
+            hover_color="#2D98D6",
+            font=ctk.CTkFont(size=12)
+        )
+        customize_btn.pack(padx=20, pady=10, fill="x")
         
         # Botón de cierre de sesión al final
-        logout_frame = ctk.CTkFrame(self.sidebar, fg_color="transparent")
-        logout_frame.pack(side="bottom", fill="x", pady=20)
-        
         logout_btn = ctk.CTkButton(
-            logout_frame, 
+            bottom_frame, 
             text="Cerrar sesión", 
             command=self._logout,
             fg_color="#E76F51",
             hover_color="#F4A261",
             font=ctk.CTkFont(weight="bold")
         )
-        logout_btn.pack(padx=20, pady=10)
+        logout_btn.pack(padx=20, pady=(0, 20), fill="x")
 
     def _create_status_bar(self):
         """Crea la barra de estado inferior."""
@@ -262,9 +307,9 @@ class ISMV3App(ctk.CTk):
                                     font=ctk.CTkFont(size=10))
         self.status_msg.pack(side="left", padx=10)
     
-    def _add_menu_section(self, title, text_color="#FFFFFF"):
+    def _add_menu_section(self, parent_frame, title, text_color="#FFFFFF"):
         """Añade una sección al menú lateral con mejor estilo."""
-        section_frame = ctk.CTkFrame(self.sidebar, fg_color="transparent")
+        section_frame = ctk.CTkFrame(parent_frame, fg_color="transparent")
         section_frame.pack(fill="x", padx=10, pady=(15, 5))
         
         section_label = ctk.CTkLabel(
@@ -275,10 +320,10 @@ class ISMV3App(ctk.CTk):
         )
         section_label.pack(fill="x", padx=10, pady=(0, 5), anchor="w")
     
-    def _add_menu_button(self, frame_name, text, command):
+    def _add_menu_button(self, parent_frame, frame_name, text, command):
         """Añade un botón al menú lateral con mejor estilo."""
         btn = ctk.CTkButton(
-            self.sidebar, 
+            parent_frame, 
             text=text, 
             command=command,
             fg_color="transparent", 
@@ -291,9 +336,7 @@ class ISMV3App(ctk.CTk):
         )
         btn.pack(fill="x", padx=10, pady=3)
         
-        # Guardar referencia al botón para resaltar el activo
-        if not hasattr(self, 'menu_buttons'):
-            self.menu_buttons = {}
+        # Guardar referencia al botón
         self.menu_buttons[frame_name] = btn
     
     def _setup_content_frames(self):
@@ -301,68 +344,117 @@ class ISMV3App(ctk.CTk):
         # Diccionario para almacenar frames
         self.frames = {}
         
+        # MODIFICADO: Función auxiliar para crear frames con scroll
+        def create_scrollable_frame(title):
+            # Crear un frame contenedor
+            container = ctk.CTkFrame(self.main_view)
+            container.grid_rowconfigure(0, weight=1)
+            container.grid_columnconfigure(0, weight=1)
+            
+            # Crear el frame con scroll
+            scrollable = ctk.CTkScrollableFrame(container)
+            scrollable.grid(row=0, column=0, sticky="nsew", padx=5, pady=5)
+            
+            # Añadir título
+            ctk.CTkLabel(
+                scrollable, 
+                text=title, 
+                font=ctk.CTkFont(size=20, weight="bold")
+            ).pack(pady=20, anchor="w")
+            
+            return container, scrollable
+        
         # Frame Dashboard - Usando la nueva vista mejorada
         try:
-            self.frames["dashboard"] = DashboardView(self.main_view)
+            # Manejar el DashboardView de manera especial si es una clase personalizada
+            dashboard_container = ctk.CTkFrame(self.main_view)
+            dashboard_container.grid_rowconfigure(0, weight=1)
+            dashboard_container.grid_columnconfigure(0, weight=1)
+            
+            dashboard_content = DashboardView(dashboard_container)
+            dashboard_content.grid(row=0, column=0, sticky="nsew", padx=5, pady=5)
+            
+            self.frames["dashboard"] = dashboard_container
         except Exception as e:
             print(f"Error al cargar DashboardView: {e}")
-            # Fallback a un dashboard simple si falla
-            self.frames["dashboard"] = ctk.CTkFrame(self.main_view)
-            ctk.CTkLabel(self.frames["dashboard"], 
-                       text="Dashboard - Bienvenido a ISMV3", 
-                       font=ctk.CTkFont(size=20, weight="bold")).pack(pady=20)
+            # Fallback a dashboard simple con scroll
+            container, scrollable = create_scrollable_frame("Dashboard - Bienvenido a ISMV3")
+            self.frames["dashboard"] = container
         
         # Frame Trabajadores
         try:
-            self.frames["workers"] = WorkerView(self.main_view)
+            # Intentar usar WorkerView, si es una clase personalizada
+            workers_container = ctk.CTkFrame(self.main_view)
+            workers_container.grid_rowconfigure(0, weight=1)
+            workers_container.grid_columnconfigure(0, weight=1)
+            
+            workers_content = WorkerView(workers_container)
+            workers_content.grid(row=0, column=0, sticky="nsew", padx=5, pady=5)
+            
+            self.frames["workers"] = workers_container
         except Exception as e:
             print(f"Error al cargar WorkerView: {e}")
-            self.frames["workers"] = ctk.CTkFrame(self.main_view)
-            ctk.CTkLabel(self.frames["workers"], 
-                       text=f"Error al cargar módulo de Trabajadores: {str(e)}", 
-                       text_color="red").pack(pady=20)
+            # Fallback
+            container, scrollable = create_scrollable_frame("Módulo de Trabajadores")
+            ctk.CTkLabel(scrollable, text=f"Error al cargar: {str(e)}", text_color="red").pack(pady=10)
+            self.frames["workers"] = container
         
-        # Frame Clientes (placeholder)
-        self.frames["clients"] = ctk.CTkFrame(self.main_view)
-        ctk.CTkLabel(self.frames["clients"], 
-                   text="Módulo de Clientes", 
-                   font=ctk.CTkFont(size=20, weight="bold")).pack(pady=20)
+        # MODIFICADO: Frame Clientes - Usando ClientView
+        try:
+            # Intentar usar ClientView
+            clients_container = ctk.CTkFrame(self.main_view)
+            clients_container.grid_rowconfigure(0, weight=1)
+            clients_container.grid_columnconfigure(0, weight=1)
+            
+            clients_content = ClientView(clients_container)
+            clients_content.grid(row=0, column=0, sticky="nsew", padx=5, pady=5)
+            
+            self.frames["clients"] = clients_container
+        except Exception as e:
+            print(f"Error al cargar ClientView: {e}")
+            # Fallback si hay error
+            container, scrollable = create_scrollable_frame("Módulo de Clientes")
+            ctk.CTkLabel(scrollable, text=f"Error al cargar módulo: {str(e)}", text_color="red").pack(pady=10)
+            self.frames["clients"] = container
         
-        # Frame Pesajes (placeholder)
-        self.frames["weighing"] = ctk.CTkFrame(self.main_view)
-        ctk.CTkLabel(self.frames["weighing"], 
-                   text="Módulo de Pesajes", 
-                   font=ctk.CTkFont(size=20, weight="bold")).pack(pady=20)
+        # Frame Pesajes (con scroll)
+        container, scrollable = create_scrollable_frame("Módulo de Pesajes")
+        # Aquí añadir el contenido específico del módulo de pesajes
+        self.frames["weighing"] = container
         
-        # Frame Transacciones (placeholder)
-        self.frames["transactions"] = ctk.CTkFrame(self.main_view)
-        ctk.CTkLabel(self.frames["transactions"], 
-                   text="Módulo de Transacciones", 
-                   font=ctk.CTkFont(size=20, weight="bold")).pack(pady=20)
+        # Frame Transacciones (con scroll)
+        container, scrollable = create_scrollable_frame("Módulo de Transacciones")
+        # Aquí añadir el contenido específico del módulo de transacciones
+        self.frames["transactions"] = container
         
-        # Frame Materiales (placeholder)
-        self.frames["materials"] = ctk.CTkFrame(self.main_view)
-        ctk.CTkLabel(self.frames["materials"], 
-                   text="Módulo de Materiales", 
-                   font=ctk.CTkFont(size=20, weight="bold")).pack(pady=20)
+        # Frame Materiales (con scroll)
+        container, scrollable = create_scrollable_frame("Módulo de Materiales")
+        # Aquí añadir el contenido específico del módulo de materiales
+        self.frames["materials"] = container
         
         # Solo para administradores
         if self.current_user and self.current_user.role == "admin":
             try:
                 # Frame Usuarios
-                self.frames["users"] = UserAdminView(self.main_view)
+                users_container = ctk.CTkFrame(self.main_view)
+                users_container.grid_rowconfigure(0, weight=1)
+                users_container.grid_columnconfigure(0, weight=1)
+                
+                users_content = UserAdminView(users_container)
+                users_content.grid(row=0, column=0, sticky="nsew", padx=5, pady=5)
+                
+                self.frames["users"] = users_container
             except Exception as e:
                 print(f"Error al cargar UserAdminView: {e}")
-                self.frames["users"] = ctk.CTkFrame(self.main_view)
-                ctk.CTkLabel(self.frames["users"], 
-                           text=f"Error al cargar módulo de Usuarios: {str(e)}", 
-                           text_color="red").pack(pady=20)
+                # Fallback
+                container, scrollable = create_scrollable_frame("Módulo de Usuarios")
+                ctk.CTkLabel(scrollable, text=f"Error al cargar: {str(e)}", text_color="red").pack(pady=10)
+                self.frames["users"] = container
             
-            # Frame Configuración (placeholder)
-            self.frames["settings"] = ctk.CTkFrame(self.main_view)
-            ctk.CTkLabel(self.frames["settings"], 
-                       text="Configuración del Sistema", 
-                       font=ctk.CTkFont(size=20, weight="bold")).pack(pady=20)
+            # Frame Configuración (con scroll)
+            container, scrollable = create_scrollable_frame("Configuración del Sistema")
+            # Aquí añadir el contenido específico del módulo de configuración
+            self.frames["settings"] = container
     
     def show_frame(self, frame_name):
         """
@@ -383,12 +475,14 @@ class ISMV3App(ctk.CTk):
             messagebox.showerror("Error", f"El módulo '{frame_name}' no está disponible")
             return
         
+        # MODIFICADO: Usar grid en lugar de pack/forget para mejor gestión del espacio
+        
         # Ocultar frame actual
         if self.current_frame and self.current_frame in self.frames:
-            self.frames[self.current_frame].pack_forget()
+            self.frames[self.current_frame].grid_forget()
         
         # Mostrar nuevo frame
-        self.frames[frame_name].pack(fill="both", expand=True)
+        self.frames[frame_name].grid(row=0, column=0, sticky="nsew")
         self.current_frame = frame_name
         
         # Actualizar estado
@@ -514,6 +608,254 @@ class ISMV3App(ctk.CTk):
         # Bloquear ventana principal
         change_window.transient(self)
         change_window.grab_set()
+    
+    # NUEVO: Alternar tema
+    def _toggle_theme(self):
+        """Alterna entre tema claro y oscuro."""
+        if self.user_preferences:
+            new_theme = self.user_preferences.toggle_theme()
+            ctk.set_appearance_mode(new_theme)
+            
+            # Mostrar mensaje
+            theme_name = "oscuro" if new_theme == "dark" else "claro"
+            self.status_msg.configure(text=f"Tema cambiado a modo {theme_name}")
+    
+    # NUEVO: Personalizar menú (Versión mejorada)
+    def _show_menu_customizer(self):
+        """Muestra el diálogo para personalizar el menú."""
+        # Crear ventana de personalización
+        customizer = ctk.CTkToplevel(self)
+        customizer.title("Personalizar menú")
+        customizer.geometry("500x600")
+        customizer.resizable(False, False)
+        
+        # Centrar ventana
+        customizer.update_idletasks()
+        width = customizer.winfo_width()
+        height = customizer.winfo_height()
+        x = (customizer.winfo_screenwidth() // 2) - (width // 2)
+        y = (customizer.winfo_screenheight() // 2) - (height // 2)
+        customizer.geometry(f'{width}x{height}+{x}+{y}')
+        
+        # Frame principal - MODIFICADO: usar frame scrollable para adaptarse a cualquier tamaño
+        main_frame = ctk.CTkScrollableFrame(customizer)
+        main_frame.pack(fill="both", expand=True, padx=20, pady=20)
+        
+        # Título
+        ctk.CTkLabel(
+            main_frame,
+            text="Personalizar Menú",
+            font=ctk.CTkFont(size=20, weight="bold")
+        ).pack(pady=15)
+        
+        ctk.CTkLabel(
+            main_frame,
+            text="Selecciona un elemento y usa los botones para moverlo",
+            font=ctk.CTkFont(size=12)
+        ).pack(pady=(0, 15))
+        
+        # Obtener estructura actual del menú
+        current_menu = self.user_preferences.get_menu_order()
+        
+        # Crear una estructura plana para los elementos del menú
+        menu_items = []
+        for section, items in current_menu.items():
+            # No incluir sección de administración si no es admin
+            if section == "ADMINISTRACIÓN" and (not self.current_user or self.current_user.role != "admin"):
+                continue
+                
+            # Añadir encabezado de sección
+            menu_items.append({"type": "section", "text": section})
+            
+            # Añadir elementos
+            for item in items:
+                # No incluir elementos de administración si no es admin
+                if item["id"] in ["users", "settings"] and (not self.current_user or self.current_user.role != "admin"):
+                    continue
+                menu_items.append({"type": "item", "id": item["id"], "text": item["text"], "section": section})
+        
+        # Crear lista para mostrar los elementos
+        listbox_frame = ctk.CTkFrame(main_frame)
+        listbox_frame.pack(fill="both", expand=True, pady=10)
+        
+        # Añadir barra de scroll adicional para listbox
+        listbox_scroll = tk.Scrollbar(listbox_frame)
+        listbox_scroll.pack(side="right", fill="y")
+        
+        menu_listbox = tk.Listbox(
+            listbox_frame,
+            height=15,
+            font=("Arial", 12),
+            bg="#2b2b2b" if ctk.get_appearance_mode() == "dark" else "#f0f0f0",
+            fg="#ffffff" if ctk.get_appearance_mode() == "dark" else "#000000",
+            yscrollcommand=listbox_scroll.set
+        )
+        menu_listbox.pack(fill="both", expand=True, padx=5, pady=5, side="left")
+        listbox_scroll.config(command=menu_listbox.yview)
+        
+        # Llenar la listbox
+        for item in menu_items:
+            if item["type"] == "section":
+                menu_listbox.insert(tk.END, f"--- {item['text']} ---")
+            else:
+                menu_listbox.insert(tk.END, f"    {item['text']}")
+        
+        # Frame para botones de movimiento
+        buttons_frame = ctk.CTkFrame(main_frame)
+        buttons_frame.pack(fill="x", pady=10)
+        
+        # Funciones de movimiento
+        def move_up():
+            selected = menu_listbox.curselection()
+            if not selected or selected[0] <= 0:
+                return
+            
+            # No permitir mover secciones
+            current_item = menu_listbox.get(selected[0])
+            if current_item.startswith("---"):
+                return
+                
+            # No permitir mover elementos fuera de su sección
+            prev_item = menu_listbox.get(selected[0] - 1)
+            if prev_item.startswith("---"):
+                return
+                
+            # Verificar que no sea el primer elemento después de un encabezado
+            if selected[0] > 0:
+                prev_prev_item = menu_listbox.get(selected[0] - 2) if selected[0] > 1 else ""
+                if prev_prev_item.startswith("---"):
+                    return
+            
+            # Intercambiar posiciones
+            text = menu_listbox.get(selected[0])
+            menu_listbox.delete(selected[0])
+            menu_listbox.insert(selected[0] - 1, text)
+            menu_listbox.selection_clear(0, tk.END)
+            menu_listbox.selection_set(selected[0] - 1)
+            menu_listbox.see(selected[0] - 1)
+        
+        def move_down():
+            selected = menu_listbox.curselection()
+            if not selected or selected[0] >= menu_listbox.size() - 1:
+                return
+            
+            # No permitir mover secciones
+            current_item = menu_listbox.get(selected[0])
+            if current_item.startswith("---"):
+                return
+                
+            # No permitir mover elementos fuera de su sección
+            next_item = menu_listbox.get(selected[0] + 1)
+            if next_item.startswith("---"):
+                return
+            
+            # Intercambiar posiciones
+            text = menu_listbox.get(selected[0])
+            menu_listbox.delete(selected[0])
+            menu_listbox.insert(selected[0] + 1, text)
+            menu_listbox.selection_clear(0, tk.END)
+            menu_listbox.selection_set(selected[0] + 1)
+            menu_listbox.see(selected[0] + 1)
+        
+        # Botones de movimiento
+        ctk.CTkButton(
+            buttons_frame,
+            text="Mover arriba",
+            command=move_up,
+            width=120
+        ).pack(side="left", padx=10)
+        
+        ctk.CTkButton(
+            buttons_frame,
+            text="Mover abajo",
+            command=move_down,
+            width=120
+        ).pack(side="left", padx=10)
+        
+        # Función para guardar los cambios
+        def save_changes():
+            # Reconstruir la estructura del menú
+            new_menu = {}
+            current_section = None
+            
+            for i in range(menu_listbox.size()):
+                item_text = menu_listbox.get(i)
+                
+                # Si es encabezado de sección
+                if item_text.startswith("---"):
+                    current_section = item_text.strip("- ")
+                    new_menu[current_section] = []
+                
+                # Si es un elemento y ya tenemos una sección
+                elif current_section and item_text.strip():
+                    # Buscar el ID del elemento original
+                    item_display_text = item_text.strip()
+                    
+                    # Encontrar el elemento correspondiente en la estructura original
+                    for item in menu_items:
+                        if item["type"] == "item" and item["text"] == item_display_text:
+                            new_menu[current_section].append({
+                                "id": item["id"],
+                                "text": item_display_text
+                            })
+                            break
+            
+            # Añadir secciones que no se muestran a usuarios no admin
+            for section, items in current_menu.items():
+                if section not in new_menu:
+                    new_menu[section] = items
+            
+            # Guardar la nueva estructura
+            try:
+                self.user_preferences.set_menu_order(new_menu)
+                
+                # Reconstruir el menú
+                for widget in self.sidebar.winfo_children():
+                    widget.destroy()
+                
+                self._create_sidebar()
+                
+                # Resaltar el botón activo
+                if self.current_frame:
+                    self._highlight_active_menu(self.current_frame)
+                    
+                # Cerrar ventana
+                customizer.destroy()
+                
+                # Mostrar mensaje
+                self.status_msg.configure(text="Menú personalizado guardado correctamente")
+                
+            except Exception as e:
+                messagebox.showerror("Error", f"Error al guardar las preferencias: {str(e)}")
+        
+        # Botones de acción
+        action_frame = ctk.CTkFrame(main_frame, fg_color="transparent")
+        action_frame.pack(fill="x", pady=20)
+        
+        ctk.CTkButton(
+            action_frame,
+            text="Restablecer predeterminado",
+            command=lambda: (self.user_preferences.reset_preferences(), customizer.destroy(), 
+                            [w.destroy() for w in self.sidebar.winfo_children()], 
+                            self._create_sidebar(),
+                            self.status_msg.configure(text="Menú restablecido")),
+            fg_color="gray50",
+            hover_color="gray40",
+            width=150
+        ).pack(side="left", padx=10)
+        
+        ctk.CTkButton(
+            action_frame,
+            text="Guardar cambios",
+            command=save_changes,
+            fg_color="#43B0F1",
+            hover_color="#2D98D6",
+            width=150
+        ).pack(side="right", padx=10)
+        
+        # Bloquear ventana principal
+        customizer.transient(self)
+        customizer.grab_set()
     
     def _logout(self):
         """Cierra la sesión actual."""
