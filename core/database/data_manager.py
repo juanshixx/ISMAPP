@@ -1,216 +1,120 @@
 """
-Gestor de datos que utiliza SQLite directamente.
+Gestor de acceso a la base de datos SQLite para ISMAPP.
 """
 import os
-from typing import Dict, List, Any, Optional
-import json
 import sqlite3
-from datetime import datetime
+import threading
 
 class DataManager:
-    """
-    Gestor de datos que proporciona acceso a la base de datos SQLite.
-    """
+    """Clase para gestionar operaciones de base de datos."""
     
-    _instance = None  # Para implementar patrón Singleton
+    _instance = None
+    _lock = threading.Lock()
     
-    def __new__(cls, *args, **kwargs):
-        """Implementa patrón Singleton para una única instancia de acceso a datos"""
-        if cls._instance is None:
-            cls._instance = super(DataManager, cls).__new__(cls)
-        return cls._instance
+    def __new__(cls):
+        """Implementación de patrón Singleton."""
+        with cls._lock:
+            if cls._instance is None:
+                cls._instance = super(DataManager, cls).__new__(cls)
+                cls._instance._initialized = False
+            return cls._instance
     
-    def __init__(self, db_path: str = "data/ismv3.db"):
-        """
-        Inicializa el gestor de datos.
-        
-        Args:
-            db_path (str): Ruta al archivo de base de datos SQLite.
-        """
-        # Evitar reinicializar si ya existe
-        if hasattr(self, 'initialized'):
+    def __init__(self):
+        """Inicializa el gestor de datos."""
+        if self._initialized:
             return
             
-        self.db_path = db_path
-        self.connection = None
-        self.cursor = None
+        # Configurar ruta de la base de datos
+        self.db_path = os.path.join("data", "ismv3.db")
+        self._initialized = True
         
-        # Marcar como inicializado
-        self.initialized = True
-        
-        # Asegurarse de que existe el directorio
-        os.makedirs(os.path.dirname(db_path), exist_ok=True)
-        
-        # Conectar inmediatamente
-        self.connect()
+        # Verificar que existe la base de datos
+        if not os.path.exists(self.db_path):
+            print(f"ADVERTENCIA: La base de datos no existe en {self.db_path}")
+            print("Por favor ejecuta el script 'scripts/recreate_db.py' primero")
     
-    def __del__(self):
-        """Desconectar al finalizar"""
-        self.disconnect()
-    
-    def connect(self) -> bool:
-        """Establecer conexión con la base de datos"""
-        try:
-            self.connection = sqlite3.connect(self.db_path)
-            self.connection.row_factory = sqlite3.Row  # Para obtener resultados como diccionarios
-            self.cursor = self.connection.cursor()
-            return True
-        except Exception as e:
-            print(f"Error al conectar con la base de datos: {str(e)}")
-            return False
-    
-    def disconnect(self) -> bool:
-        """Cerrar conexión con la base de datos"""
-        try:
-            if self.connection:
-                self.connection.close()
-                self.connection = None
-                self.cursor = None
-            return True
-        except Exception as e:
-            print(f"Error al desconectar de la base de datos: {str(e)}")
-            return False
-    
-    def _ensure_table_exists(self, entity_type: str):
-        """Asegura que existe la tabla para el tipo de entidad"""
-        self.cursor.execute(f'''
-        CREATE TABLE IF NOT EXISTS {entity_type} (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            data JSON NOT NULL,
-            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-            updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-        )
-        ''')
-        self.connection.commit()
-    
-    def get_all(self, entity_type: str) -> List[Dict[str, Any]]:
+    def execute_query(self, query, params=()):
         """
-        Obtiene todos los registros de una entidad.
+        Ejecuta una consulta SQL y devuelve los resultados.
         
         Args:
-            entity_type (str): Tipo de entidad.
+            query (str): Consulta SQL a ejecutar
+            params (tuple, optional): Parámetros para la consulta
             
         Returns:
-            List[Dict[str, Any]]: Lista de diccionarios con los datos.
+            list/int: Resultados de la consulta o ID de la última inserción
         """
-        if not self.connection and not self.connect():
-            return []
-        
+        connection = None
         try:
-            self._ensure_table_exists(entity_type)
-            self.cursor.execute(f"SELECT id, data FROM {entity_type}")
-            rows = self.cursor.fetchall()
+            connection = sqlite3.connect(self.db_path)
             
-            result = []
-            for row in rows:
-                # Combinar ID con datos JSON
-                data = json.loads(row['data'])
-                data['id'] = row['id']  # Asegurar que el ID está incluido
-                result.append(data)
+            # Habilitar claves foráneas
+            connection.execute("PRAGMA foreign_keys = ON")
             
-            return result
-        except Exception as e:
-            print(f"Error al obtener datos de {entity_type}: {str(e)}")
-            return []
-    
-    def get_by_id(self, entity_type: str, entity_id: int) -> Optional[Dict[str, Any]]:
-        """
-        Obtiene un registro por su ID.
-        
-        Args:
-            entity_type (str): Tipo de entidad.
-            entity_id (int): ID de la entidad.
+            # Configurar para que las respuestas sean diccionarios
+            connection.row_factory = sqlite3.Row
+            cursor = connection.cursor()
             
-        Returns:
-            Optional[Dict[str, Any]]: Diccionario con los datos o None si no se encuentra.
-        """
-        if not self.connection and not self.connect():
-            return None
-        
-        try:
-            self._ensure_table_exists(entity_type)
-            self.cursor.execute(f"SELECT id, data FROM {entity_type} WHERE id = ?", (entity_id,))
-            row = self.cursor.fetchone()
+            # Debug: mostrar consulta
+            print(f"Ejecutando: {query}")
+            print(f"Parámetros: {params}")
             
-            if row:
-                data = json.loads(row['data'])
-                data['id'] = row['id']  # Asegurar que el ID está incluido
-                return data
-            return None
-        except Exception as e:
-            print(f"Error al obtener entidad {entity_type} con ID {entity_id}: {str(e)}")
-            return None
-    
-    def save(self, entity_type: str, entity_data: Dict[str, Any]) -> Dict[str, Any]:
-        """
-        Guarda un registro nuevo o actualiza uno existente.
-        
-        Args:
-            entity_type (str): Tipo de entidad.
-            entity_data (Dict[str, Any]): Datos de la entidad.
+            # Ejecutar consulta
+            cursor.execute(query, params)
             
-        Returns:
-            Dict[str, Any]: Datos de la entidad guardada.
-        """
-        if not self.connection and not self.connect():
-            return entity_data
-        
-        try:
-            self._ensure_table_exists(entity_type)
+            # Para SELECT, devolver resultados
+            if query.strip().upper().startswith("SELECT"):
+                rows = cursor.fetchall()
+                # Convertir objetos Row a diccionarios
+                results = []
+                for row in rows:
+                    results.append({key: row[key] for key in row.keys()})
+                return results
             
-            entity_id = entity_data.pop('id', None)  # Extraer ID si existe
-            now = datetime.now().isoformat()
-            
-            if entity_id:
-                # Actualizar registro existente
-                self.cursor.execute(
-                    f"UPDATE {entity_type} SET data = ?, updated_at = ? WHERE id = ?",
-                    (json.dumps(entity_data), now, entity_id)
-                )
-                if self.cursor.rowcount == 0:
-                    # Si no se actualizó ninguna fila, insertar como nuevo
-                    self.cursor.execute(
-                        f"INSERT INTO {entity_type} (id, data, created_at, updated_at) VALUES (?, ?, ?, ?)",
-                        (entity_id, json.dumps(entity_data), now, now)
-                    )
+            # Para INSERT, UPDATE, DELETE
             else:
-                # Insertar nuevo registro
-                self.cursor.execute(
-                    f"INSERT INTO {entity_type} (data, created_at, updated_at) VALUES (?, ?, ?)",
-                    (json.dumps(entity_data), now, now)
-                )
-                entity_id = self.cursor.lastrowid
-            
-            self.connection.commit()
-            
-            # Devolver datos con ID
-            entity_data['id'] = entity_id
-            return entity_data
+                connection.commit()
+                last_id = cursor.lastrowid
+                return last_id
+                
         except Exception as e:
-            print(f"Error al guardar datos en {entity_type}: {str(e)}")
-            self.connection.rollback()
-            return entity_data
+            print(f"Error en la consulta: {e}")
+            if connection:
+                connection.rollback()
+            raise
+        finally:
+            if connection:
+                connection.close()
     
-    def delete(self, entity_type: str, entity_id: int) -> bool:
+    # Método de compatibilidad para WorkerView
+    def get_all(self, table_name, condition=None):
         """
-        Elimina un registro por su ID.
+        Obtiene todos los registros de una tabla.
         
         Args:
-            entity_type (str): Tipo de entidad.
-            entity_id (int): ID de la entidad a eliminar.
+            table_name (str): Nombre de la tabla
+            condition (str, optional): Condición WHERE
             
         Returns:
-            bool: True si se eliminó correctamente.
+            list: Lista de diccionarios con los datos
         """
-        if not self.connection and not self.connect():
-            return False
+        query = f"SELECT * FROM {table_name}"
+        if condition:
+            query += f" WHERE {condition}"
+            
+        return self.execute_query(query)
+    
+    def get_connection(self):
+        """
+        Obtiene una conexión a la base de datos.
         
+        Returns:
+            Connection: Objeto de conexión SQLite
+        """
         try:
-            self._ensure_table_exists(entity_type)
-            self.cursor.execute(f"DELETE FROM {entity_type} WHERE id = ?", (entity_id,))
-            self.connection.commit()
-            return self.cursor.rowcount > 0
+            connection = sqlite3.connect(self.db_path)
+            connection.execute("PRAGMA foreign_keys = ON")
+            return connection
         except Exception as e:
-            print(f"Error al eliminar registro de {entity_type}: {str(e)}")
-            self.connection.rollback()
-            return False
+            print(f"Error al conectar a la base de datos: {e}")
+            raise

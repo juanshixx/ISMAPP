@@ -2,11 +2,33 @@
 Modelo de datos para la entidad Cliente.
 """
 
+class ClientType:
+    """Constantes para tipos de clientes"""
+    BUYER = "buyer"
+    SUPPLIER = "supplier"
+    BOTH = "both"
+    
+    @classmethod
+    def get_all_types(cls):
+        """Retorna todos los tipos de clientes disponibles"""
+        return [cls.BUYER, cls.SUPPLIER, cls.BOTH]
+    
+    @classmethod
+    def get_display_name(cls, type_code):
+        """Retorna el nombre para mostrar de un tipo de cliente"""
+        display_names = {
+            cls.BUYER: "Comprador",
+            cls.SUPPLIER: "Proveedor",
+            cls.BOTH: "Comprador y Proveedor"
+        }
+        return display_names.get(type_code, "Desconocido")
+
 class Client:
     """Representación de un cliente en el sistema."""
     
     def __init__(self, id=None, name="", business_name="", rut="", address="", 
-                 phone="", email="", contact_person="", notes="", is_active=True):
+                 phone="", email="", contact_person="", notes="", is_active=True,
+                 client_type=ClientType.BOTH):
         """
         Inicializa un nuevo cliente.
         
@@ -21,6 +43,7 @@ class Client:
             contact_person (str): Persona de contacto
             notes (str): Notas adicionales
             is_active (bool): Estado del cliente (activo/inactivo)
+            client_type (str): Tipo de cliente (comprador/proveedor/ambos)
         """
         self.id = id
         self.name = name
@@ -32,6 +55,7 @@ class Client:
         self.contact_person = contact_person
         self.notes = notes
         self.is_active = is_active
+        self.client_type = client_type
     
     def to_dict(self):
         """Convierte el cliente a un diccionario para almacenamiento."""
@@ -46,6 +70,7 @@ class Client:
             'contact_person': self.contact_person,
             'notes': self.notes,
             'is_active': self.is_active,
+            'client_type': self.client_type,
         }
     
     @classmethod
@@ -69,5 +94,14 @@ class Client:
             email=data.get('email', ''),
             contact_person=data.get('contact_person', ''),
             notes=data.get('notes', ''),
-            is_active=data.get('is_active', True)
+            is_active=data.get('is_active', True),
+            client_type=data.get('client_type', ClientType.BOTH)
         )
+
+    def is_buyer(self):
+        """Verifica si el cliente es comprador"""
+        return self.client_type in [ClientType.BUYER, ClientType.BOTH]
+        
+    def is_supplier(self):
+        """Verifica si el cliente es proveedor"""
+        return self.client_type in [ClientType.SUPPLIER, ClientType.BOTH]

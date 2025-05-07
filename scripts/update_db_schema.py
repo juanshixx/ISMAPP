@@ -1,5 +1,5 @@
 """
-Script para actualizar el esquema de la base de datos y añadir la tabla de clientes.
+Script para actualizar el esquema de la base de datos.
 """
 import sqlite3
 import os
@@ -12,7 +12,7 @@ sys.path.insert(0, parent_dir)
 
 def update_db_schema(db_path):
     """
-    Actualiza el esquema de la base de datos para añadir la tabla de clientes.
+    Actualiza el esquema de la base de datos.
     
     Args:
         db_path (str): Ruta al archivo de base de datos
@@ -27,58 +27,84 @@ def update_db_schema(db_path):
         conn = sqlite3.connect(db_path)
         cursor = conn.cursor()
         
-        # Verificar si ya existe la tabla clients
-        cursor.execute("SELECT name FROM sqlite_master WHERE type='table' AND name='clients'")
+        # 1. Actualizar la tabla de clientes si ya existe
+        cursor.execute("PRAGMA table_info(clients)")
+        columns = [column[1] for column in cursor.fetchall()]
+        
+        # Añadir columna client_type si no existe
+        if 'client_type' not in columns:
+            cursor.execute("ALTER TABLE clients ADD COLUMN client_type TEXT DEFAULT 'both'")
+        
+        # 2. Crear tabla de materiales si no existe
+        cursor.execute("SELECT name FROM sqlite_master WHERE type='table' AND name='materials'")
         if cursor.fetchone() is None:
-            # Crear tabla clients
             cursor.execute('''
-                CREATE TABLE clients (
+                CREATE TABLE materials (
                     id INTEGER PRIMARY KEY AUTOINCREMENT,
                     name TEXT NOT NULL,
-                    business_name TEXT NOT NULL,
-                    rut TEXT NOT NULL,
-                    address TEXT,
-                    phone TEXT,
-                    email TEXT,
-                    contact_person TEXT,
-                    notes TEXT,
+                    description TEXT,
+                    material_type TEXT NOT NULL,
+                    is_plastic_subtype INTEGER DEFAULT 0,
+                    plastic_subtype TEXT,
+                    plastic_state TEXT,
+                    custom_subtype TEXT,
                     is_active INTEGER DEFAULT 1,
                     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
                     updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
                 )
             ''')
             
-            # Crear índices para búsqueda rápida
-            cursor.execute("CREATE INDEX idx_clients_name ON clients (name)")
-            cursor.execute("CREATE INDEX idx_clients_business ON clients (business_name)")
-            cursor.execute("CREATE INDEX idx_clients_rut ON clients (rut)")
-            cursor.execute("CREATE INDEX idx_clients_active ON clients (is_active)")
+            # Crear índices para la tabla de materiales
+            cursor.execute("CREATE INDEX idx_materials_name ON materials (name)")
+            cursor.execute("CREATE INDEX idx_materials_type ON materials (material_type)")
+            cursor.execute("CREATE INDEX idx_materials_active ON materials (is_active)")
             
-            # Insertar datos de ejemplo
-            sample_clients = [
-                ("Comercial Recicla S.A.", "Comercial Recicla S.A.", "76.111.222-3", "Av. Las Industrias 1234, Santiago", 
-                 "+56 2 2222 3333", "contacto@recicla.cl", "María González", "Cliente mayorista", 1),
-                ("EcoRenova Ltda.", "Sociedad EcoRenova Limitada", "77.444.555-6", "Calle Los Recicladores 567, Concepción", 
-                 "+56 41 222 3456", "info@ecorenova.cl", "Pedro Soto", "Especialista en plásticos", 1),
-                ("Recuperaciones del Sur", "Recuperaciones del Sur SpA", "76.888.999-0", "Ruta 5 Sur Km 15, Temuco", 
-                 "+56 45 268 7890", "contacto@recuperasur.cl", "Jorge Mendoza", "", 1),
-                ("Metales Santiago", "Inversiones Metálicas S.A.", "96.333.444-5", "Camino a Melipilla 9876, Santiago", 
-                 "+56 2 2777 8888", "ventas@metalesscl.cl", "Carolina Rojas", "Comprador de cobre y aluminio", 1),
-                ("EcoPapel Chile", "Papelera Recicladora Chilena Ltda.", "77.123.456-7", "Los Alerces 456, Valparaíso", 
-                 "+56 32 211 4567", "contacto@ecopapel.cl", "Roberto Fuentes", "", 1)
+            # Insertar materiales de ejemplo
+            sample_materials = [
+                ("PET", "Polietileno tereftalato", "plastic", 1, "candy", "clean", "", 1),
+                ("HDPE", "Polietileno de alta densidad", "plastic", 1, "gum", "clean", "", 1),
+                ("PP", "Polipropileno", "plastic", 1, "other", "clean", "Flexible", 1),
+                ("PVC", "Policloruro de vinilo", "plastic", 1, "other", "dirty", "Rígido", 1),
+                ("Cobre", "Cobre para reciclaje", "metal", 0, "", "", "", 1),
+                ("Aluminio", "Latas y perfiles", "metal", 0, "", "", "", 1),
+                ("Chatarra Ferrosa", "Hierro y acero", "metal", 0, "", "", "", 1),
+                ("Cartón", "Cajas y embalajes", "paper", 0, "", "", "", 1),
+                ("Papel Blanco", "Papel de oficina", "paper", 0, "", "", "", 1),
+                ("Vidrio Transparente", "Botellas y frascos", "glass", 0, "", "", "", 1)
             ]
             
             cursor.executemany('''
-                INSERT INTO clients (name, business_name, rut, address, phone, email, contact_person, notes, is_active)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
-            ''', sample_clients)
-            
-            conn.commit()
-            print("Tabla 'clients' creada correctamente con datos de ejemplo")
-        else:
-            print("La tabla 'clients' ya existe en la base de datos")
+                INSERT INTO materials (name, description, material_type, is_plastic_subtype,
+                                    plastic_subtype, plastic_state, custom_subtype, is_active)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+            ''', sample_materials)
         
+        # 3. Crear tabla de relación cliente-material si no existe
+        cursor.execute("SELECT name FROM sqlite_master WHERE type='table' AND name='client_materials'")
+        if cursor.fetchone() is None:
+            cursor.execute('''
+                CREATE TABLE client_materials (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    client_id INTEGER NOT NULL,
+                    material_id INTEGER NOT NULL,
+                    price REAL DEFAULT 0.0,
+                    includes_tax INTEGER DEFAULT 0,
+                    notes TEXT,
+                    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                    FOREIGN KEY (client_id) REFERENCES clients(id),
+                    FOREIGN KEY (material_id) REFERENCES materials(id),
+                    UNIQUE(client_id, material_id)
+                )
+            ''')
+            
+            # Crear índices para la tabla de relación
+            cursor.execute("CREATE INDEX idx_cm_client ON client_materials (client_id)")
+            cursor.execute("CREATE INDEX idx_cm_material ON client_materials (material_id)")
+        
+        conn.commit()
         conn.close()
+        print("Esquema de base de datos actualizado correctamente")
         return True
         
     except sqlite3.Error as e:
