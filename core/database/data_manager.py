@@ -1,216 +1,309 @@
 """
-Gestor de datos que utiliza SQLite directamente.
+Gestor de acceso a la base de datos SQLite para ISMAPP.
 """
 import os
-from typing import Dict, List, Any, Optional
-import json
 import sqlite3
-from datetime import datetime
+import threading
 
 class DataManager:
-    """
-    Gestor de datos que proporciona acceso a la base de datos SQLite.
-    """
+    """Clase para gestionar operaciones de base de datos."""
     
-    _instance = None  # Para implementar patrón Singleton
+    _instance = None
+    _lock = threading.Lock()
     
-    def __new__(cls, *args, **kwargs):
-        """Implementa patrón Singleton para una única instancia de acceso a datos"""
-        if cls._instance is None:
-            cls._instance = super(DataManager, cls).__new__(cls)
-        return cls._instance
+    def __new__(cls):
+        """Implementación de patrón Singleton."""
+        with cls._lock:
+            if cls._instance is None:
+                cls._instance = super(DataManager, cls).__new__(cls)
+                cls._instance._initialized = False
+            return cls._instance
     
-    def __init__(self, db_path: str = "data/ismv3.db"):
-        """
-        Inicializa el gestor de datos.
-        
-        Args:
-            db_path (str): Ruta al archivo de base de datos SQLite.
-        """
-        # Evitar reinicializar si ya existe
-        if hasattr(self, 'initialized'):
+    def __init__(self):
+        """Inicializa el gestor de datos."""
+        if self._initialized:
             return
             
-        self.db_path = db_path
-        self.connection = None
-        self.cursor = None
+        # Configurar ruta de la base de datos
+        self.db_path = os.path.join("data", "ismv3.db")
+        self._initialized = True
         
-        # Marcar como inicializado
-        self.initialized = True
-        
-        # Asegurarse de que existe el directorio
-        os.makedirs(os.path.dirname(db_path), exist_ok=True)
-        
-        # Conectar inmediatamente
-        self.connect()
+        # Verificar que existe la base de datos
+        if not os.path.exists(self.db_path):
+            # Crear directorio de datos si no existe
+            data_dir = os.path.dirname(self.db_path)
+            if not os.path.exists(data_dir):
+                os.makedirs(data_dir, exist_ok=True)
+                
+            # Crear base de datos vacía
+            try:
+                connection = sqlite3.connect(self.db_path)
+                connection.close()
+                print(f"Base de datos creada en: {self.db_path}")
+                
+                # Crear el esquema básico
+                self._create_schema()
+            except Exception as e:
+                print(f"Error al crear la base de datos: {e}")
     
-    def __del__(self):
-        """Desconectar al finalizar"""
-        self.disconnect()
-    
-    def connect(self) -> bool:
-        """Establecer conexión con la base de datos"""
+    def _create_schema(self):
+        """Crea el esquema inicial de la base de datos."""
+        connection = None
         try:
-            self.connection = sqlite3.connect(self.db_path)
-            self.connection.row_factory = sqlite3.Row  # Para obtener resultados como diccionarios
-            self.cursor = self.connection.cursor()
-            return True
+            connection = sqlite3.connect(self.db_path)
+            cursor = connection.cursor()
+            
+            # Tabla de usuarios (para autenticación)
+            cursor.execute('''
+            CREATE TABLE IF NOT EXISTS users (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                username TEXT NOT NULL UNIQUE,
+                password TEXT NOT NULL,
+                name TEXT,
+                role TEXT DEFAULT 'user',
+                is_active INTEGER DEFAULT 1,
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+            )
+            ''')
+            
+            # Crear índices para usuarios
+            cursor.execute("CREATE INDEX IF NOT EXISTS idx_users_username ON users (username)")
+            cursor.execute("CREATE INDEX IF NOT EXISTS idx_users_role ON users (role)")
+            
+            # Tabla de clientes
+            cursor.execute('''
+            CREATE TABLE IF NOT EXISTS clients (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                name TEXT NOT NULL,
+                business_name TEXT NOT NULL,
+                rut TEXT NOT NULL,
+                address TEXT,
+                phone TEXT,
+                email TEXT,
+                contact_person TEXT,
+                notes TEXT,
+                is_active INTEGER DEFAULT 1,
+                client_type TEXT DEFAULT 'both',
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+            )
+            ''')
+            
+            # Crear índices para clientes
+            cursor.execute("CREATE INDEX IF NOT EXISTS idx_clients_name ON clients (name)")
+            cursor.execute("CREATE INDEX IF NOT EXISTS idx_clients_rut ON clients (rut)")
+            cursor.execute("CREATE INDEX IF NOT EXISTS idx_clients_type ON clients (client_type)")
+            
+            # Tabla de materiales
+            cursor.execute('''
+            CREATE TABLE IF NOT EXISTS materials (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                name TEXT NOT NULL,
+                description TEXT,
+                material_type TEXT NOT NULL,
+                is_plastic_subtype INTEGER DEFAULT 0,
+                plastic_subtype TEXT,
+                plastic_state TEXT,
+                custom_subtype TEXT,
+                is_active INTEGER DEFAULT 1,
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+            )
+            ''')
+            
+            # Crear índices para materiales
+            cursor.execute("CREATE INDEX IF NOT EXISTS idx_materials_name ON materials (name)")
+            cursor.execute("CREATE INDEX IF NOT EXISTS idx_materials_type ON materials (material_type)")
+            
+            # Tabla de relación cliente-material (con precios)
+            cursor.execute('''
+            CREATE TABLE IF NOT EXISTS client_materials (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                client_id INTEGER NOT NULL,
+                material_id INTEGER NOT NULL,
+                price REAL DEFAULT 0.0,
+                includes_tax INTEGER DEFAULT 0,
+                notes TEXT,
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                FOREIGN KEY (client_id) REFERENCES clients(id),
+                FOREIGN KEY (material_id) REFERENCES materials(id),
+                UNIQUE(client_id, material_id)
+            )
+            ''')
+            
+            # Crear índices para relación
+            cursor.execute("CREATE INDEX IF NOT EXISTS idx_cm_client ON client_materials (client_id)")
+            cursor.execute("CREATE INDEX IF NOT EXISTS idx_cm_material ON client_materials (material_id)")
+            
+            # Tabla de trabajadores
+            cursor.execute('''
+            CREATE TABLE IF NOT EXISTS workers (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                name TEXT NOT NULL,
+                rut TEXT NOT NULL UNIQUE,
+                phone TEXT,
+                address TEXT,
+                email TEXT,
+                role TEXT,
+                salary REAL DEFAULT 0.0,
+                is_active INTEGER DEFAULT 1,
+                notes TEXT,
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+            )
+            ''')
+            
+            # Crear índices para trabajadores
+            cursor.execute("CREATE INDEX IF NOT EXISTS idx_workers_name ON workers (name)")
+            cursor.execute("CREATE INDEX IF NOT EXISTS idx_workers_rut ON workers (rut)")
+            
+            # Insertar usuario admin por defecto
+            cursor.execute('''
+            INSERT OR IGNORE INTO users (username, password, name, role)
+            VALUES (?, ?, ?, ?)
+            ''', ('admin', 'admin123', 'Administrador', 'admin'))
+            
+            connection.commit()
+            print("Esquema de base de datos creado correctamente!")
+            
         except Exception as e:
-            print(f"Error al conectar con la base de datos: {str(e)}")
-            return False
+            print(f"Error al crear el esquema: {e}")
+            if connection:
+                connection.rollback()
+        finally:
+            if connection:
+                connection.close()
     
-    def disconnect(self) -> bool:
-        """Cerrar conexión con la base de datos"""
-        try:
-            if self.connection:
-                self.connection.close()
-                self.connection = None
-                self.cursor = None
-            return True
-        except Exception as e:
-            print(f"Error al desconectar de la base de datos: {str(e)}")
-            return False
-    
-    def _ensure_table_exists(self, entity_type: str):
-        """Asegura que existe la tabla para el tipo de entidad"""
-        self.cursor.execute(f'''
-        CREATE TABLE IF NOT EXISTS {entity_type} (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            data JSON NOT NULL,
-            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-            updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-        )
-        ''')
-        self.connection.commit()
-    
-    def get_all(self, entity_type: str) -> List[Dict[str, Any]]:
+    def execute_query(self, query, params=()):
         """
-        Obtiene todos los registros de una entidad.
+        Ejecuta una consulta SQL y devuelve los resultados.
         
         Args:
-            entity_type (str): Tipo de entidad.
+            query (str): Consulta SQL a ejecutar
+            params (tuple, optional): Parámetros para la consulta
             
         Returns:
-            List[Dict[str, Any]]: Lista de diccionarios con los datos.
+            list/int/bool: Resultados de la consulta, ID de inserción o indicador de éxito
         """
-        if not self.connection and not self.connect():
-            return []
-        
+        connection = None
         try:
-            self._ensure_table_exists(entity_type)
-            self.cursor.execute(f"SELECT id, data FROM {entity_type}")
-            rows = self.cursor.fetchall()
+            connection = sqlite3.connect(self.db_path)
             
-            result = []
-            for row in rows:
-                # Combinar ID con datos JSON
-                data = json.loads(row['data'])
-                data['id'] = row['id']  # Asegurar que el ID está incluido
-                result.append(data)
+            # Habilitar claves foráneas
+            connection.execute("PRAGMA foreign_keys = ON")
             
-            return result
-        except Exception as e:
-            print(f"Error al obtener datos de {entity_type}: {str(e)}")
-            return []
-    
-    def get_by_id(self, entity_type: str, entity_id: int) -> Optional[Dict[str, Any]]:
-        """
-        Obtiene un registro por su ID.
-        
-        Args:
-            entity_type (str): Tipo de entidad.
-            entity_id (int): ID de la entidad.
+            # Debug: mostrar consulta
+            print(f"Ejecutando: {query}")
+            print(f"Parámetros: {params}")
             
-        Returns:
-            Optional[Dict[str, Any]]: Diccionario con los datos o None si no se encuentra.
-        """
-        if not self.connection and not self.connect():
-            return None
-        
-        try:
-            self._ensure_table_exists(entity_type)
-            self.cursor.execute(f"SELECT id, data FROM {entity_type} WHERE id = ?", (entity_id,))
-            row = self.cursor.fetchone()
+            # Para SELECT que involucre JOINs, utilizamos un enfoque alternativo
+            if query.strip().upper().startswith("SELECT") and " JOIN " in query.upper():
+                # Crear cursor directamente con row_factory
+                connection.row_factory = sqlite3.Row
+                cursor = connection.cursor()
+                
+                # Ejecutar la consulta
+                cursor.execute(query, params)
+                
+                # Obtener los resultados
+                rows = cursor.fetchall()
+                
+                # Para JOINs, creamos un diccionario por cada fila que incluye el prefijo de la tabla
+                result = []
+                for row in rows:
+                    row_dict = {}
+                    for key in row.keys():
+                        row_dict[key] = row[key]  # Nombres de columnas estándar
+                        
+                    result.append(row_dict)
+                    
+                connection.close()
+                return result
+                
+            # Para las consultas SELECT normales
+            elif query.strip().upper().startswith("SELECT"):
+                # Configurar para que las respuestas sean diccionarios
+                connection.row_factory = sqlite3.Row
+                cursor = connection.cursor()
+                
+                # Ejecutar consulta
+                cursor.execute(query, params)
+                rows = cursor.fetchall()
+                
+                # Convertir objetos Row a diccionarios
+                results = []
+                for row in rows:
+                    results.append({key: row[key] for key in row.keys()})
+                    
+                connection.close()
+                return results
             
-            if row:
-                data = json.loads(row['data'])
-                data['id'] = row['id']  # Asegurar que el ID está incluido
-                return data
-            return None
-        except Exception as e:
-            print(f"Error al obtener entidad {entity_type} con ID {entity_id}: {str(e)}")
-            return None
-    
-    def save(self, entity_type: str, entity_data: Dict[str, Any]) -> Dict[str, Any]:
-        """
-        Guarda un registro nuevo o actualiza uno existente.
-        
-        Args:
-            entity_type (str): Tipo de entidad.
-            entity_data (Dict[str, Any]): Datos de la entidad.
-            
-        Returns:
-            Dict[str, Any]: Datos de la entidad guardada.
-        """
-        if not self.connection and not self.connect():
-            return entity_data
-        
-        try:
-            self._ensure_table_exists(entity_type)
-            
-            entity_id = entity_data.pop('id', None)  # Extraer ID si existe
-            now = datetime.now().isoformat()
-            
-            if entity_id:
-                # Actualizar registro existente
-                self.cursor.execute(
-                    f"UPDATE {entity_type} SET data = ?, updated_at = ? WHERE id = ?",
-                    (json.dumps(entity_data), now, entity_id)
-                )
-                if self.cursor.rowcount == 0:
-                    # Si no se actualizó ninguna fila, insertar como nuevo
-                    self.cursor.execute(
-                        f"INSERT INTO {entity_type} (id, data, created_at, updated_at) VALUES (?, ?, ?, ?)",
-                        (entity_id, json.dumps(entity_data), now, now)
-                    )
+            # Para INSERT, UPDATE, DELETE
             else:
-                # Insertar nuevo registro
-                self.cursor.execute(
-                    f"INSERT INTO {entity_type} (data, created_at, updated_at) VALUES (?, ?, ?)",
-                    (json.dumps(entity_data), now, now)
-                )
-                entity_id = self.cursor.lastrowid
-            
-            self.connection.commit()
-            
-            # Devolver datos con ID
-            entity_data['id'] = entity_id
-            return entity_data
+                cursor = connection.cursor()
+                cursor.execute(query, params)
+                
+                # Confirmar cambios
+                connection.commit()
+                
+                # Para INSERT, intentar obtener el ID
+                if query.strip().upper().startswith("INSERT"):
+                    # Intentar obtener lastrowid
+                    last_id = cursor.lastrowid
+                    
+                    # Si es None o 0, intentar obtenerlo explícitamente
+                    if last_id is None or last_id == 0:
+                        cursor.execute("SELECT last_insert_rowid()")
+                        row = cursor.fetchone()
+                        if row and row[0] is not None:
+                            last_id = row[0]
+                    
+                    connection.close()
+                    return last_id
+                
+                # Para UPDATE y DELETE, devolver True (éxito)
+                connection.close()
+                return True
+                
         except Exception as e:
-            print(f"Error al guardar datos en {entity_type}: {str(e)}")
-            self.connection.rollback()
-            return entity_data
+            print(f"Error en la consulta: {e}")
+            if connection:
+                connection.rollback()
+            if connection:
+                connection.close()
+            # En lugar de propagar el error, devolvemos None para indicar un problema
+            return None
     
-    def delete(self, entity_type: str, entity_id: int) -> bool:
+    def get_all(self, table_name, condition=None):
         """
-        Elimina un registro por su ID.
+        Obtiene todos los registros de una tabla.
         
         Args:
-            entity_type (str): Tipo de entidad.
-            entity_id (int): ID de la entidad a eliminar.
+            table_name (str): Nombre de la tabla
+            condition (str, optional): Condición WHERE
             
         Returns:
-            bool: True si se eliminó correctamente.
+            list: Lista de diccionarios con los datos
         """
-        if not self.connection and not self.connect():
-            return False
+        query = f"SELECT * FROM {table_name}"
+        if condition:
+            query += f" WHERE {condition}"
+            
+        return self.execute_query(query)
+    
+    def get_connection(self):
+        """
+        Obtiene una conexión a la base de datos.
         
+        Returns:
+            Connection: Objeto de conexión SQLite
+        """
         try:
-            self._ensure_table_exists(entity_type)
-            self.cursor.execute(f"DELETE FROM {entity_type} WHERE id = ?", (entity_id,))
-            self.connection.commit()
-            return self.cursor.rowcount > 0
+            connection = sqlite3.connect(self.db_path)
+            connection.execute("PRAGMA foreign_keys = ON")
+            return connection
         except Exception as e:
-            print(f"Error al eliminar registro de {entity_type}: {str(e)}")
-            self.connection.rollback()
-            return False
+            print(f"Error al conectar a la base de datos: {e}")
+            raise

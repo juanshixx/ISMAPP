@@ -1,0 +1,45 @@
+{
+    "theme": "dark",
+    "menu_order": {
+        "GENERAL": [
+            {
+                "id": "dashboard",
+                "text": "📊  Dashboard"
+            }
+        ],
+        "OPERACIONES": [
+            {
+                "id": "weighing",
+                "text": "⚖️  Pesajes"
+            },
+            {
+                "id": "transactions",
+                "text": "💰  Transacciones"
+            }
+        ],
+        "ENTIDADES": [
+            {
+                "id": "workers",
+                "text": "👷  Trabajadores"
+            },
+            {
+                "id": "clients",
+                "text": "🏢  Clientes"
+            },
+            {
+                "id": "materials",
+                "text": "📦  Materiales"
+            }
+        ],
+        "ADMINISTRACIÓN": [
+            {
+                "id": "users",
+                "text": "👥  Usuarios"
+            },
+            {
+                "id": "settings",
+                "text": "⚙️  Configuración"
+            }
+        ]
+    }
+}
