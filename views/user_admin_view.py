@@ -1,296 +1,547 @@
 """
-Vista para la administración de usuarios en ISMV3.
+Vista para la administración de usuarios en ISMAPP.
 """
 import tkinter as tk
 from tkinter import messagebox
 import customtkinter as ctk
-from typing import Optional, List, Dict, Any
-
-from models.user import User
-from controllers.user_controller import UserController
-
 
 class UserAdminView(ctk.CTkFrame):
-    """Vista para administrar usuarios del sistema."""
+    """Vista para la administración de usuarios del sistema."""
     
-    def __init__(self, parent, **kwargs):
+    def __init__(self, parent):
         """
         Inicializa la vista de administración de usuarios.
         
         Args:
-            parent: Widget padre en la jerarquía de tkinter.
-            **kwargs: Argumentos adicionales para el Frame.
+            parent: Frame contenedor
         """
-        super().__init__(parent, **kwargs)
-        self.controller = UserController()
-        self.selected_user: Optional[User] = None
+        super().__init__(parent)
+        self.grid_rowconfigure(0, weight=1)
+        self.grid_columnconfigure(0, weight=1)
         
-        self._init_ui()
+        # Obtener referencia al data_manager desde la ventana principal
+        main_window = self.winfo_toplevel()
+        try:
+            self.data_manager = main_window.data_manager
+        except AttributeError:
+            messagebox.showerror("Error", "No se pudo acceder al gestor de datos")
+            return
+        
+        # Variables para almacenar datos
+        self.users = []
+        self.current_user = None
+        
+        # Crear UI
+        self._create_ui()
+        
+        # Cargar datos iniciales
         self._load_users()
     
-    def _init_ui(self):
-        """Inicializa los elementos de la interfaz de usuario."""
-        # Configuración de la cuadrícula principal
-        self.columnconfigure(0, weight=1)
-        self.columnconfigure(1, weight=3)
-        self.rowconfigure(0, weight=1)
+    def _create_ui(self):
+        """Crea la interfaz de usuario del módulo."""
+        # Frame contenedor principal (scrollable)
+        self.main_container = ctk.CTkScrollableFrame(self)
+        self.main_container.grid(row=0, column=0, sticky="nsew", padx=10, pady=10)
         
-        # Panel izquierdo - Lista de usuarios
-        left_panel = ctk.CTkFrame(self)
-        left_panel.grid(row=0, column=0, sticky="nsew", padx=10, pady=10)
+        # Título del módulo
+        header_frame = ctk.CTkFrame(self.main_container, fg_color="transparent")
+        header_frame.pack(fill="x", pady=(0, 15))
         
-        # Lista de usuarios
-        list_frame = ctk.CTkFrame(left_panel)
-        list_frame.pack(fill="both", expand=True, padx=5, pady=5)
+        ctk.CTkLabel(
+            header_frame,
+            text="Administración de Usuarios",
+            font=ctk.CTkFont(size=22, weight="bold")
+        ).pack(side="left")
         
-        self.user_listbox = tk.Listbox(list_frame, bg="#2b2b2b", fg="#ffffff",
-                                     selectbackground="#1f538d")
-        self.user_listbox.pack(fill="both", expand=True)
-        self.user_listbox.bind("<<ListboxSelect>>", self._on_user_select)
-        
-        # Botones de acción para la lista
-        btn_frame = ctk.CTkFrame(left_panel)
-        btn_frame.pack(fill="x", padx=5, pady=5)
-        
-        ctk.CTkButton(btn_frame, text="Nuevo", command=self._on_new_user).pack(
-            side="left", padx=5, pady=5)
-        ctk.CTkButton(btn_frame, text="Eliminar", command=self._on_delete_user).pack(
-            side="right", padx=5, pady=5)
-        
-        # Panel derecho - Detalles del usuario
-        right_panel = ctk.CTkFrame(self)
-        right_panel.grid(row=0, column=1, sticky="nsew", padx=10, pady=10)
-        
-        # Formulario de detalles
-        form_frame = ctk.CTkFrame(right_panel)
-        form_frame.pack(fill="both", expand=True, padx=10, pady=10)
-        
-        # Variables para campos del formulario
-        self.username_var = tk.StringVar()
-        self.name_var = tk.StringVar()
-        self.role_var = tk.StringVar(value="user")
-        self.active_var = tk.BooleanVar(value=True)
-        self.password_var = tk.StringVar()
-        self.confirm_password_var = tk.StringVar()
-        
-        # Campos del formulario
-        row = 0
-        
-        # Username
-        ctk.CTkLabel(form_frame, text="Usuario:").grid(
-            row=row, column=0, sticky="w", padx=5, pady=5)
-        self.username_entry = ctk.CTkEntry(form_frame, textvariable=self.username_var, width=300)
-        self.username_entry.grid(row=row, column=1, sticky="ew", padx=5, pady=5)
-        row += 1
-        
-        # Nombre completo
-        ctk.CTkLabel(form_frame, text="Nombre:").grid(
-            row=row, column=0, sticky="w", padx=5, pady=5)
-        ctk.CTkEntry(form_frame, textvariable=self.name_var, width=300).grid(
-            row=row, column=1, sticky="ew", padx=5, pady=5)
-        row += 1
-        
-        # Role
-        ctk.CTkLabel(form_frame, text="Rol:").grid(
-            row=row, column=0, sticky="w", padx=5, pady=5)
-        
-        roles_frame = ctk.CTkFrame(form_frame)
-        roles_frame.grid(row=row, column=1, sticky="ew", padx=5, pady=5)
-        
-        ctk.CTkRadioButton(roles_frame, text="Usuario", variable=self.role_var, 
-                        value="user").pack(side="left", padx=10)
-        ctk.CTkRadioButton(roles_frame, text="Administrador", variable=self.role_var,
-                        value="admin").pack(side="left", padx=10)
-        row += 1
-        
-        # Estado activo
-        ctk.CTkLabel(form_frame, text="Estado:").grid(
-            row=row, column=0, sticky="w", padx=5, pady=5)
-        ctk.CTkCheckBox(roles_frame, text="Activo", variable=self.active_var).pack(
-            side="left", padx=50)
-        row += 1
-        
-        # Separador para contraseña
-        separator = ctk.CTkFrame(form_frame, height=2, fg_color="gray50")
-        separator.grid(row=row, column=0, columnspan=2, sticky="ew", padx=5, pady=10)
-        row += 1
-        
-        # Contraseña
-        ctk.CTkLabel(form_frame, text="Contraseña:").grid(
-            row=row, column=0, sticky="w", padx=5, pady=5)
-        ctk.CTkEntry(form_frame, textvariable=self.password_var, show="•", width=300).grid(
-            row=row, column=1, sticky="ew", padx=5, pady=5)
-        row += 1
-        
-        # Confirmar contraseña
-        ctk.CTkLabel(form_frame, text="Confirmar contraseña:").grid(
-            row=row, column=0, sticky="w", padx=5, pady=5)
-        ctk.CTkEntry(form_frame, textvariable=self.confirm_password_var, show="•", width=300).grid(
-            row=row, column=1, sticky="ew", padx=5, pady=5)
-        row += 1
-        
-        # Nota sobre contraseña
-        self.password_note = ctk.CTkLabel(
-            form_frame, 
-            text="Dejar en blanco para mantener la contraseña actual",
-            text_color="gray70",
-            font=ctk.CTkFont(size=10, slant="italic")
+        # Botón para crear nuevo usuario
+        self.add_button = ctk.CTkButton(
+            header_frame,
+            text="+ Nuevo Usuario",
+            command=self._show_edit_dialog,
+            width=130
         )
-        self.password_note.grid(row=row, column=0, columnspan=2, sticky="w", padx=5)
-        row += 1
+        self.add_button.pack(side="right", padx=10)
         
-        # Mensajes de error
-        self.error_label = ctk.CTkLabel(form_frame, text="", text_color="red")
-        self.error_label.grid(row=row, column=0, columnspan=2, sticky="ew", padx=5, pady=5)
-        row += 1
+        # Frame para búsqueda
+        search_frame = ctk.CTkFrame(self.main_container, fg_color="transparent")
+        search_frame.pack(fill="x", pady=(0, 15))
         
-        # Botón guardar
-        ctk.CTkButton(form_frame, text="Guardar", command=self._on_save_user).grid(
-            row=row, column=0, columnspan=2, padx=5, pady=10)
+        # Barra de búsqueda
+        self.search_var = tk.StringVar()
+        self.search_var.trace_add("write", lambda *args: self._filter_users())
         
-        # Configuración de expansión en el formulario
-        form_frame.columnconfigure(1, weight=1)
+        search_entry = ctk.CTkEntry(
+            search_frame,
+            placeholder_text="Buscar usuario...",
+            width=300,
+            textvariable=self.search_var
+        )
+        search_entry.pack(side="left", fill="x", expand=True)
+        
+        # Frame para la tabla de usuarios
+        table_container = ctk.CTkFrame(self.main_container)
+        table_container.pack(fill="both", expand=True)
+        
+        # Cabecera de la tabla
+        columns = ["Usuario", "Nombre", "Rol", "Estado", "Acciones"]
+        header_frame = ctk.CTkFrame(table_container, fg_color=("#DDDDDD", "#2B2B2B"))
+        header_frame.pack(fill="x")
+        
+        # Configurar ancho de columnas
+        widths = [0.2, 0.3, 0.15, 0.15, 0.2]  # Proporciones
+        for i, col in enumerate(columns):
+            col_frame = ctk.CTkFrame(header_frame, fg_color="transparent")
+            col_frame.pack(side="left", fill="both", expand=True, padx=2, pady=5)
+            col_frame.configure(width=int(700 * widths[i]))  # Ancho proporcional
+                
+            ctk.CTkLabel(
+                col_frame, 
+                text=col,
+                font=ctk.CTkFont(weight="bold")
+            ).pack()
+        
+        # Contenedor para filas de usuarios
+        self.users_rows_frame = ctk.CTkScrollableFrame(table_container, fg_color="transparent")
+        self.users_rows_frame.pack(fill="both", expand=True)
     
     def _load_users(self):
-        """Carga la lista de usuarios desde el controlador."""
-        self.user_listbox.delete(0, tk.END)
-        users = self.controller.get_all_users()
+        """Carga la lista de usuarios desde la base de datos."""
+        query = """
+        SELECT id, username, name, role, is_active 
+        FROM users 
+        ORDER BY username
+        """
         
-        for user in sorted(users, key=lambda u: u.username):
-            status = "✓" if user.is_active else "✗"
-            role = "Admin" if user.role == "admin" else "Usuario"
-            self.user_listbox.insert(tk.END, f"{status} {user.username} ({role})")
-            # Almacenamos el username como datos adicionales del item
-            self.user_listbox.itemconfig(tk.END, {'username': user.username})
+        try:
+            self.users = self.data_manager.execute_query(query)
+            self._update_users_table()
+        except Exception as e:
+            messagebox.showerror("Error", f"Error al cargar usuarios: {e}")
     
-    def _on_user_select(self, event=None):
-        """Maneja la selección de un usuario en la lista."""
-        selection = self.user_listbox.curselection()
-        if not selection:
+    def _filter_users(self):
+        """Filtra la lista de usuarios según búsqueda."""
+        self._update_users_table()
+    
+    def _update_users_table(self):
+        """Actualiza la tabla de usuarios en la UI."""
+        # Limpiar tabla actual
+        for widget in self.users_rows_frame.winfo_children():
+            widget.destroy()
+        
+        # Obtener término de búsqueda
+        search_term = self.search_var.get().lower().strip()
+        
+        # Filtrar usuarios
+        filtered_users = self.users
+        if search_term:
+            filtered_users = [
+                user for user in self.users
+                if (search_term in user['username'].lower() or
+                    search_term in (user['name'] or '').lower() or
+                    search_term in (user['role'] or '').lower())
+            ]
+        
+        # Verificar si hay usuarios para mostrar
+        if not filtered_users:
+            no_data_label = ctk.CTkLabel(
+                self.users_rows_frame,
+                text="No se encontraron usuarios",
+                font=ctk.CTkFont(size=14),
+                text_color="gray60"
+            )
+            no_data_label.pack(pady=30)
             return
         
-        index = selection[0]
-        username = self.user_listbox.itemcget(index, 'username')
-        if not username:
-            return
-        
-        user = self.controller.get_user(username)
-        if user:
-            self.selected_user = user
-            self._populate_form(user)
+        # Crear filas para cada usuario
+        for i, user in enumerate(filtered_users):
+            row_color = ("#F5F5F5", "#2D2D2D") if i % 2 == 0 else ("#FFFFFF", "#333333")
+            row_frame = ctk.CTkFrame(self.users_rows_frame, fg_color=row_color, corner_radius=0)
+            row_frame.pack(fill="x", pady=1)
+            
+            # Username
+            username_frame = ctk.CTkFrame(row_frame, fg_color="transparent")
+            username_frame.pack(side="left", fill="both", expand=True, padx=2, pady=8)
+            ctk.CTkLabel(username_frame, text=user['username']).pack(anchor="w", padx=5)
+            
+            # Nombre
+            name_frame = ctk.CTkFrame(row_frame, fg_color="transparent")
+            name_frame.pack(side="left", fill="both", expand=True, padx=2, pady=8)
+            ctk.CTkLabel(name_frame, text=user['name'] or "").pack(anchor="w", padx=5)
+            
+            # Rol
+            role_frame = ctk.CTkFrame(row_frame, fg_color="transparent")
+            role_frame.pack(side="left", fill="both", expand=True, padx=2, pady=8)
+            
+            role_text = user['role']
+            role_color = "#4CAF50" if role_text == "admin" else "#2196F3"
+            
+            ctk.CTkLabel(
+                role_frame, 
+                text=role_text,
+                text_color=role_color,
+                font=ctk.CTkFont(size=12, weight="bold")
+            ).pack(anchor="w", padx=5)
+            
+            # Estado
+            status_frame = ctk.CTkFrame(row_frame, fg_color="transparent")
+            status_frame.pack(side="left", fill="both", expand=True, padx=2, pady=8)
+            
+            is_active = user['is_active'] == 1
+            status_text = "Activo" if is_active else "Inactivo"
+            status_color = "#4CAF50" if is_active else "#F44336"
+            
+            ctk.CTkLabel(
+                status_frame, 
+                text=status_text,
+                text_color=status_color
+            ).pack(anchor="w", padx=5)
+            
+            # Acciones
+            actions_frame = ctk.CTkFrame(row_frame, fg_color="transparent")
+            actions_frame.pack(side="left", fill="both", padx=2, pady=3)
+            
+            # Botón editar
+            edit_btn = ctk.CTkButton(
+                actions_frame,
+                text="✏️",
+                width=30,
+                command=lambda u=user: self._show_edit_dialog(u),
+                fg_color=("#6E9075", "#2D6A6A")
+            )
+            edit_btn.pack(side="left", padx=2)
+            
+            # Botón eliminar/restaurar
+            icon = "🔄" if not is_active else "❌"
+            color = ("#BC7777", "#AA5555") if is_active else ("#6E9075", "#2D6A6A")
+            
+            toggle_btn = ctk.CTkButton(
+                actions_frame,
+                text=icon,
+                width=30,
+                command=lambda u=user: self._toggle_user_status(u),
+                fg_color=color
+            )
+            toggle_btn.pack(side="left", padx=2)
+            
+            # Botón resetear contraseña
+            reset_btn = ctk.CTkButton(
+                actions_frame,
+                text="🔑",
+                width=30,
+                command=lambda u=user: self._reset_password(u),
+                fg_color=("#5D87B4", "#2D6A9A")
+            )
+            reset_btn.pack(side="left", padx=2)
     
-    def _populate_form(self, user: User):
-        """Rellena el formulario con los datos del usuario."""
-        self.username_var.set(user.username)
-        self.name_var.set(user.name)
-        self.role_var.set(user.role)
-        self.active_var.set(user.is_active)
+    def _show_edit_dialog(self, user=None):
+        """
+        Muestra el diálogo para crear o editar un usuario.
         
-        # Limpiar campos de contraseña
-        self.password_var.set("")
-        self.confirm_password_var.set("")
+        Args:
+            user (dict, optional): Usuario a editar, None para crear nuevo
+        """
+        self.current_user = user or {}
         
-        # Mostrar nota de contraseña
-        self.password_note.grid()
+        # Crear ventana de diálogo
+        dialog = ctk.CTkToplevel(self)
+        dialog.title("Nuevo Usuario" if not user else "Editar Usuario")
+        dialog.geometry("500x400")
+        dialog.resizable(False, False)
         
-        # Deshabilitar cambio de username para usuarios existentes
-        self.username_entry.configure(state="disabled")
+        # Centrar ventana
+        dialog.update_idletasks()
+        x = (dialog.winfo_screenwidth() // 2) - (dialog.winfo_width() // 2)
+        y = (dialog.winfo_screenheight() // 2) - (dialog.winfo_height() // 2)
+        dialog.geometry(f'+{x}+{y}')
         
-        # Limpiar mensaje de error
-        self.error_label.configure(text="")
+        # Contenedor principal con scroll
+        main_frame = ctk.CTkScrollableFrame(dialog)
+        main_frame.pack(fill="both", expand=True, padx=20, pady=20)
+        
+        # Título
+        ctk.CTkLabel(
+            main_frame,
+            text="Datos del Usuario",
+            font=ctk.CTkFont(size=18, weight="bold")
+        ).pack(pady=(0, 20), anchor="w")
+        
+        # Form fields
+        form_frame = ctk.CTkFrame(main_frame, fg_color="transparent")
+        form_frame.pack(fill="x", pady=10)
+        
+        # Variables para campos
+        username_var = tk.StringVar(value=self.current_user.get('username', ''))
+        name_var = tk.StringVar(value=self.current_user.get('name', ''))
+        role_var = tk.StringVar(value=self.current_user.get('role', 'user'))
+        active_var = tk.BooleanVar(value=self.current_user.get('is_active', 1) == 1)
+        password_var = tk.StringVar()
+        confirm_var = tk.StringVar()
+        
+        # Username
+        ctk.CTkLabel(form_frame, text="Nombre de usuario*").pack(anchor="w", pady=(10, 0))
+        username_entry = ctk.CTkEntry(form_frame, textvariable=username_var)
+        username_entry.pack(fill="x", pady=(0, 10))
+        
+        # Nombre completo
+        ctk.CTkLabel(form_frame, text="Nombre completo").pack(anchor="w", pady=(10, 0))
+        ctk.CTkEntry(form_frame, textvariable=name_var).pack(fill="x", pady=(0, 10))
+        
+        # Rol
+        ctk.CTkLabel(form_frame, text="Rol*").pack(anchor="w", pady=(10, 0))
+        
+        role_frame = ctk.CTkFrame(form_frame, fg_color="transparent")
+        role_frame.pack(fill="x", pady=(0, 10))
+        
+        ctk.CTkRadioButton(
+            role_frame, 
+            text="Usuario", 
+            variable=role_var, 
+            value="user"
+        ).pack(side="left", padx=10)
+        
+        ctk.CTkRadioButton(
+            role_frame, 
+            text="Administrador", 
+            variable=role_var, 
+            value="admin"
+        ).pack(side="left", padx=10)
+        
+        # Contraseña (solo para nuevos usuarios)
+        if not user:
+            ctk.CTkLabel(form_frame, text="Contraseña*").pack(anchor="w", pady=(10, 0))
+            ctk.CTkEntry(form_frame, textvariable=password_var, show="•").pack(fill="x", pady=(0, 10))
+            
+            ctk.CTkLabel(form_frame, text="Confirmar contraseña*").pack(anchor="w", pady=(10, 0))
+            ctk.CTkEntry(form_frame, textvariable=confirm_var, show="•").pack(fill="x", pady=(0, 10))
+        
+        # Estado
+        active_switch = ctk.CTkSwitch(
+            form_frame, 
+            text="Usuario Activo",
+            variable=active_var,
+            onvalue=True,
+            offvalue=False
+        )
+        active_switch.pack(anchor="w", pady=(10, 0))
+        
+        # Mensaje de error
+        error_label = ctk.CTkLabel(main_frame, text="", text_color="red")
+        error_label.pack(fill="x", pady=(10, 0))
+        
+        # Botones
+        btn_frame = ctk.CTkFrame(main_frame, fg_color="transparent")
+        btn_frame.pack(fill="x", pady=20)
+        
+        # Función para guardar usuario
+        def save_user():
+            # Validar campos
+            if not username_var.get().strip():
+                error_label.configure(text="El nombre de usuario es obligatorio")
+                return
+            
+            if not user and not password_var.get():
+                error_label.configure(text="La contraseña es obligatoria")
+                return
+                
+            if not user and password_var.get() != confirm_var.get():
+                error_label.configure(text="Las contraseñas no coinciden")
+                return
+            
+            # Preparar datos
+            user_data = {
+                'username': username_var.get().strip(),
+                'name': name_var.get().strip(),
+                'role': role_var.get(),
+                'is_active': 1 if active_var.get() else 0
+            }
+            
+            try:
+                if user:
+                    # Actualizar usuario existente
+                    query = """
+                    UPDATE users 
+                    SET username = ?, name = ?, role = ?, is_active = ?,
+                        updated_at = CURRENT_TIMESTAMP
+                    WHERE id = ?
+                    """
+                    self.data_manager.execute_query(
+                        query, 
+                        (user_data['username'], user_data['name'], 
+                         user_data['role'], user_data['is_active'], 
+                         user['id'])
+                    )
+                    messagebox.showinfo("Éxito", "Usuario actualizado correctamente")
+                else:
+                    # Crear nuevo usuario
+                    query = """
+                    INSERT INTO users (username, password, name, role, is_active)
+                    VALUES (?, ?, ?, ?, ?)
+                    """
+                    self.data_manager.execute_query(
+                        query, 
+                        (user_data['username'], password_var.get(), 
+                         user_data['name'], user_data['role'], 
+                         user_data['is_active'])
+                    )
+                    messagebox.showinfo("Éxito", "Usuario creado correctamente")
+                
+                dialog.destroy()
+                self._load_users()
+            except Exception as e:
+                error_label.configure(text=f"Error: {e}")
+        
+        # Botón cancelar
+        ctk.CTkButton(
+            btn_frame,
+            text="Cancelar",
+            command=dialog.destroy,
+            fg_color="gray50",
+            width=100
+        ).pack(side="left", padx=20)
+        
+        # Botón guardar
+        ctk.CTkButton(
+            btn_frame,
+            text="Guardar",
+            command=save_user,
+            width=100
+        ).pack(side="right", padx=20)
+        
+        # Bloquear ventana principal
+        dialog.transient(self)
+        dialog.grab_set()
+        
+        # Enfocar primer campo
+        username_entry.focus_set()
     
-    def _on_new_user(self):
-        """Prepara el formulario para un nuevo usuario."""
-        self.selected_user = None
+    def _toggle_user_status(self, user):
+        """
+        Cambia el estado de un usuario (activo/inactivo).
         
-        # Limpiar campos
-        self.username_var.set("")
-        self.name_var.set("")
-        self.role_var.set("user")
-        self.active_var.set(True)
-        self.password_var.set("")
-        self.confirm_password_var.set("")
+        Args:
+            user (dict): Usuario a modificar
+        """
+        new_status = 0 if user['is_active'] == 1 else 1
+        status_text = "activar" if new_status == 1 else "desactivar"
         
-        # Habilitar campo de username
-        self.username_entry.configure(state="normal")
-        
-        # Ocultar nota de contraseña
-        self.password_note.grid_remove()
-        
-        # Limpiar mensaje de error
-        self.error_label.configure(text="")
-    
-    def _on_save_user(self):
-        """Guarda los cambios del usuario actual."""
-        # Validar datos
-        username = self.username_var.get().strip()
-        name = self.name_var.get().strip()
-        role = self.role_var.get()
-        is_active = self.active_var.get()
-        password = self.password_var.get()
-        confirm_password = self.confirm_password_var.get()
-        
-        if not username:
-            self.error_label.configure(text="El nombre de usuario es obligatorio")
-            return
-        
-        if not name:
-            self.error_label.configure(text="El nombre es obligatorio")
-            return
-        
-        # Validar contraseñas
-        if self.selected_user is None:  # Nuevo usuario
-            if not password:
-                self.error_label.configure(text="La contraseña es obligatoria para nuevos usuarios")
+        # No permitir desactivar al último administrador activo
+        if new_status == 0 and user['role'] == 'admin':
+            # Verificar si hay otros administradores activos
+            query = "SELECT COUNT(*) as count FROM users WHERE role = 'admin' AND is_active = 1"
+            result = self.data_manager.execute_query(query)
+            
+            if result[0]['count'] <= 1:
+                messagebox.showerror("Error", "No se puede desactivar al último administrador activo")
                 return
         
-        if password and password != confirm_password:
-            self.error_label.configure(text="Las contraseñas no coinciden")
-            return
-        
-        # Construir objeto User
-        if self.selected_user:
-            # Actualizar usuario existente
-            user = self.selected_user
-            user.name = name
-            user.role = role
-            user.is_active = is_active
-        else:
-            # Crear nuevo usuario
-            user = User(
-                username=username,
-                name=name,
-                role=role,
-                is_active=is_active
-            )
-        
-        # Guardar usuario
-        if self.controller.save_user(user, password if password else None):
-            messagebox.showinfo("Éxito", f"Usuario '{username}' guardado correctamente")
-            self._load_users()
-            
-            # Si era un nuevo usuario, seleccionarlo
-            if not self.selected_user:
-                self.selected_user = self.controller.get_user(username)
-                self._populate_form(self.selected_user)
-        else:
-            self.error_label.configure(text="Error al guardar el usuario")
-    
-    def _on_delete_user(self):
-        """Elimina el usuario seleccionado."""
-        if not self.selected_user:
-            messagebox.showerror("Error", "No hay usuario seleccionado")
-            return
-        
-        # No permitir eliminar el admin
-        if self.selected_user.username == "admin":
-            messagebox.showerror("Error", "No se puede eliminar el usuario administrador")
-            return
-        
-        if messagebox.askyesno("Confirmar", f"¿Está seguro de eliminar el usuario '{self.selected_user.username}'?"):
-            if self.controller.delete_user(self.selected_user.username):
-                messagebox.showinfo("Éxito", "Usuario eliminado correctamente")
+        if messagebox.askyesno(
+            "Confirmar acción", 
+            f"¿Está seguro que desea {status_text} al usuario '{user['username']}'?"
+        ):
+            try:
+                query = "UPDATE users SET is_active = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?"
+                self.data_manager.execute_query(query, (new_status, user['id']))
+                
+                messagebox.showinfo("Éxito", f"Usuario {status_text}do correctamente")
                 self._load_users()
-                self._on_new_user()  # Limpiar formulario
-            else:
-                messagebox.showerror("Error", "No se pudo eliminar el usuario")
+            except Exception as e:
+                messagebox.showerror("Error", f"No se pudo {status_text} el usuario: {e}")
+    
+    def _reset_password(self, user):
+        """
+        Permite resetear la contraseña de un usuario.
+        
+        Args:
+            user (dict): Usuario a modificar
+        """
+        dialog = ctk.CTkToplevel(self)
+        dialog.title(f"Resetear Contraseña - {user['username']}")
+        dialog.geometry("400x250")
+        dialog.resizable(False, False)
+        
+        # Centrar ventana
+        dialog.update_idletasks()
+        x = (dialog.winfo_screenwidth() // 2) - (dialog.winfo_width() // 2)
+        y = (dialog.winfo_screenheight() // 2) - (dialog.winfo_height() // 2)
+        dialog.geometry(f'+{x}+{y}')
+        
+        # Frame principal
+        main_frame = ctk.CTkFrame(dialog)
+        main_frame.pack(fill="both", expand=True, padx=20, pady=20)
+        
+        # Título
+        ctk.CTkLabel(
+            main_frame,
+            text=f"Resetear Contraseña para {user['username']}",
+            font=ctk.CTkFont(size=16, weight="bold")
+        ).pack(pady=(0, 20))
+        
+        # Variables
+        new_pass_var = tk.StringVar()
+        confirm_pass_var = tk.StringVar()
+        
+        # Formulario
+        form_frame = ctk.CTkFrame(main_frame, fg_color="transparent")
+        form_frame.pack(fill="x", pady=10)
+        
+        # Nueva contraseña
+        ctk.CTkLabel(form_frame, text="Nueva contraseña:").pack(anchor="w")
+        new_pass_entry = ctk.CTkEntry(form_frame, textvariable=new_pass_var, show="•")
+        new_pass_entry.pack(fill="x", pady=(0, 10))
+        
+        # Confirmar contraseña
+        ctk.CTkLabel(form_frame, text="Confirmar contraseña:").pack(anchor="w")
+        ctk.CTkEntry(form_frame, textvariable=confirm_pass_var, show="•").pack(fill="x")
+        
+        # Mensaje de error
+        error_label = ctk.CTkLabel(form_frame, text="", text_color="red")
+        error_label.pack(fill="x", pady=(10, 0))
+        
+        # Botones
+        btn_frame = ctk.CTkFrame(main_frame, fg_color="transparent")
+        btn_frame.pack(fill="x", pady=20)
+        
+        def reset_password():
+            # Validar campos
+            if not new_pass_var.get():
+                error_label.configure(text="La contraseña no puede estar vacía")
+                return
+            
+            if new_pass_var.get() != confirm_pass_var.get():
+                error_label.configure(text="Las contraseñas no coinciden")
+                return
+            
+            try:
+                # Actualizar contraseña
+                query = "UPDATE users SET password = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?"
+                self.data_manager.execute_query(query, (new_pass_var.get(), user['id']))
+                
+                messagebox.showinfo("Éxito", "Contraseña actualizada correctamente")
+                dialog.destroy()
+            except Exception as e:
+                error_label.configure(text=f"Error: {e}")
+        
+        # Botón cancelar
+        ctk.CTkButton(
+            btn_frame,
+            text="Cancelar",
+            command=dialog.destroy,
+            fg_color="gray50",
+            width=100
+        ).pack(side="left", padx=10)
+        
+        # Botón restablecer
+        ctk.CTkButton(
+            btn_frame,
+            text="Restablecer",
+            command=reset_password,
+            width=100,
+            fg_color="#E76F51"
+        ).pack(side="right", padx=10)
+        
+        # Bloquear ventana principal
+        dialog.transient(self)
+        dialog.grab_set()
+        
+        # Enfocar primer campo
+        new_pass_entry.focus_set()

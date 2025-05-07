@@ -1,80 +1,40 @@
 """
-Servicio para la gestión de clientes en la base de datos.
+Servicio para la gestión de clientes.
 """
-import sqlite3
-from models.client import Client, ClientType
+from models.client import Client
 
 class ClientService:
     """Servicio para operaciones CRUD de clientes."""
     
-    def __init__(self, db_manager):
+    def __init__(self, data_manager):
         """
-        Inicializa el servicio con una conexión a la base de datos.
+        Inicializa el servicio de clientes.
         
         Args:
-            db_manager: Instancia de DataManager para acceder a la base de datos
+            data_manager: Gestor de base de datos
         """
-        self.db_manager = db_manager
-        
-    def get_all_clients(self, include_inactive=False):
+        self.db_manager = data_manager
+    
+    def get_all_clients(self):
         """
-        Obtiene todos los clientes de la base de datos.
+        Obtiene todos los clientes activos.
         
-        Args:
-            include_inactive (bool): Si se incluyen clientes inactivos
-            
         Returns:
             list: Lista de objetos Client
         """
-        query = "SELECT * FROM clients"
-        if not include_inactive:
-            query += " WHERE is_active = 1"
-        query += " ORDER BY name"
+        query = "SELECT * FROM clients WHERE is_active = 1 ORDER BY name"
         
         try:
             results = self.db_manager.execute_query(query)
-            return [Client.from_dict(result) for result in results]
+            clients = []
+            
+            for row in results:
+                client = Client.from_dict(row)
+                clients.append(client)
+                
+            return clients
         except Exception as e:
             print(f"Error al obtener clientes: {e}")
-            return []
-    
-    def search_clients(self, search_term, client_type=None):
-        """
-        Busca clientes que coincidan con el término de búsqueda.
-        
-        Args:
-            search_term (str): Término para buscar
-            client_type (str, optional): Tipo de cliente a filtrar (comprador/proveedor)
-            
-        Returns:
-            list: Lista de objetos Client que coinciden
-        """
-        # Limpiamos y preparamos el término de búsqueda
-        search = f"%{search_term.strip()}%"
-        
-        query = """
-        SELECT * FROM clients 
-        WHERE (name LIKE ? OR business_name LIKE ? OR rut LIKE ? OR contact_person LIKE ?)
-        AND is_active = 1 
-        """
-        
-        # Añadir filtro por tipo de cliente si se especifica
-        params = [search, search, search, search]
-        if client_type:
-            if client_type == ClientType.BUYER:
-                query += "AND (client_type = ? OR client_type = ?) "
-                params.extend([ClientType.BUYER, ClientType.BOTH])
-            elif client_type == ClientType.SUPPLIER:
-                query += "AND (client_type = ? OR client_type = ?) "
-                params.extend([ClientType.SUPPLIER, ClientType.BOTH])
-        
-        query += "ORDER BY name"
-        
-        try:
-            results = self.db_manager.execute_query(query, tuple(params))
-            return [Client.from_dict(result) for result in results]
-        except Exception as e:
-            print(f"Error al buscar clientes: {e}")
             return []
     
     def get_client_by_id(self, client_id):
@@ -82,37 +42,57 @@ class ClientService:
         Obtiene un cliente por su ID.
         
         Args:
-            client_id (int): ID del cliente
+            client_id (int): ID del cliente a buscar
             
         Returns:
-            Client: Cliente encontrado o None
+            Client: Objeto cliente si se encuentra, None en otro caso
         """
         query = "SELECT * FROM clients WHERE id = ?"
         
         try:
             results = self.db_manager.execute_query(query, (client_id,))
-            return Client.from_dict(results[0]) if results else None
+            
+            if results:
+                return Client.from_dict(results[0])
+            return None
         except Exception as e:
             print(f"Error al obtener cliente por ID: {e}")
             return None
     
     def save_client(self, client):
         """
-        Guarda un cliente en la base de datos (nuevo o actualización).
+        Guarda un cliente (nuevo o existente).
         
         Args:
             client (Client): Cliente a guardar
             
         Returns:
-            bool: True si se guardó correctamente, False en caso contrario
+            bool: True si se guardó correctamente
         """
-        if client.id is None:
-            return self._create_client(client)
-        else:
-            return self._update_client(client)
+        try:
+            if client.id is None:
+                # CORREGIDO: Acepta IDs igual a 0
+                result = self._create_client(client)
+                if result is not False and result is not None:
+                    client.id = result if result is not True else None
+                    return True
+                return False
+            else:
+                return self._update_client(client)
+        except Exception as e:
+            print(f"Error al guardar cliente: {e}")
+            return False
     
     def _create_client(self, client):
-        """Crea un nuevo cliente en la base de datos."""
+        """
+        Crea un nuevo cliente en la base de datos.
+        
+        Args:
+            client (Client): Cliente a crear
+            
+        Returns:
+            int/bool: ID del cliente creado o False si hay error
+        """
         query = """
         INSERT INTO clients (name, business_name, rut, address, phone, email, 
                            contact_person, notes, is_active, client_type)
@@ -120,38 +100,71 @@ class ClientService:
         """
         
         params = (
-            client.name, client.business_name, client.rut, client.address, 
-            client.phone, client.email, client.contact_person, client.notes, 
-            client.is_active, client.client_type
+            client.name, 
+            client.business_name, 
+            client.rut,
+            client.address, 
+            client.phone, 
+            client.email, 
+            client.contact_person,
+            client.notes,
+            client.is_active,
+            client.client_type
         )
         
         try:
-            # Usar execute_query en lugar de execute_insert
-            self.db_manager.execute_query(query, params)
-            result = self.db_manager.execute_query("SELECT last_insert_rowid()")
-            client.id = result[0][0] if result else None
-            return True
+            # CORREGIDO: Aceptar ID=0 como válido
+            result = self.db_manager.execute_query(query, params)
+            
+            # Si el resultado es un número (incluyendo 0) o True, la operación fue exitosa
+            if result is True or result is not None:
+                return result
+            return False
         except Exception as e:
             print(f"Error al crear cliente: {e}")
             return False
     
     def _update_client(self, client):
-        """Actualiza un cliente existente en la base de datos."""
+        """
+        Actualiza un cliente existente.
+        
+        Args:
+            client (Client): Cliente a actualizar
+            
+        Returns:
+            bool: True si se actualizó correctamente
+        """
         query = """
         UPDATE clients 
-        SET name = ?, business_name = ?, rut = ?, address = ?, phone = ?, 
-            email = ?, contact_person = ?, notes = ?, is_active = ?, client_type = ?
+        SET name = ?, 
+            business_name = ?, 
+            rut = ?, 
+            address = ?, 
+            phone = ?, 
+            email = ?, 
+            contact_person = ?, 
+            notes = ?,
+            is_active = ?,
+            client_type = ?,
+            updated_at = CURRENT_TIMESTAMP
         WHERE id = ?
         """
         
         params = (
-            client.name, client.business_name, client.rut, client.address, 
-            client.phone, client.email, client.contact_person, client.notes, 
-            client.is_active, client.client_type, client.id
+            client.name, 
+            client.business_name, 
+            client.rut,
+            client.address, 
+            client.phone, 
+            client.email, 
+            client.contact_person,
+            client.notes,
+            client.is_active,
+            client.client_type,
+            client.id
         )
         
         try:
-            # Usar execute_query en lugar de execute_update
             self.db_manager.execute_query(query, params)
             return True
         except Exception as e:
@@ -160,21 +173,85 @@ class ClientService:
     
     def delete_client(self, client_id):
         """
-        Elimina un cliente (marcándolo como inactivo).
+        Elimina un cliente de forma lógica.
         
         Args:
             client_id (int): ID del cliente a eliminar
             
         Returns:
-            bool: True si se eliminó correctamente, False en caso contrario
+            bool: True si se eliminó correctamente
         """
-        # Soft delete (marcar como inactivo)
-        query = "UPDATE clients SET is_active = 0 WHERE id = ?"
+        # En lugar de eliminar, marcamos como inactivo
+        query = """
+        UPDATE clients SET is_active = 0, updated_at = CURRENT_TIMESTAMP
+        WHERE id = ?
+        """
         
         try:
-            # Usar execute_query en lugar de execute_update
             self.db_manager.execute_query(query, (client_id,))
             return True
         except Exception as e:
             print(f"Error al eliminar cliente: {e}")
             return False
+    
+    def search_clients(self, search_term):
+        """
+        Busca clientes que coincidan con el término de búsqueda.
+        
+        Args:
+            search_term (str): Término de búsqueda
+            
+        Returns:
+            list: Lista de objetos Client que coinciden
+        """
+        search_pattern = f"%{search_term}%"
+        
+        query = """
+        SELECT * FROM clients
+        WHERE is_active = 1 AND (
+            name LIKE ? OR 
+            business_name LIKE ? OR 
+            rut LIKE ? OR
+            contact_person LIKE ?
+        )
+        ORDER BY name
+        """
+        
+        try:
+            params = (search_pattern, search_pattern, search_pattern, search_pattern)
+            results = self.db_manager.execute_query(query, params)
+            
+            clients = []
+            for row in results:
+                client = Client.from_dict(row)
+                clients.append(client)
+                
+            return clients
+        except Exception as e:
+            print(f"Error al buscar clientes: {e}")
+            return []
+    
+    def get_clients_by_type(self, client_type):
+        """
+        Obtiene clientes filtrados por tipo.
+        
+        Args:
+            client_type (str): Tipo de cliente a filtrar ('supplier', 'buyer', 'both')
+            
+        Returns:
+            list: Lista de objetos Client
+        """
+        query = "SELECT * FROM clients WHERE is_active = 1 AND client_type = ? ORDER BY name"
+        
+        try:
+            results = self.db_manager.execute_query(query, (client_type,))
+            
+            clients = []
+            for row in results:
+                client = Client.from_dict(row)
+                clients.append(client)
+                
+            return clients
+        except Exception as e:
+            print(f"Error al obtener clientes por tipo: {e}")
+            return []

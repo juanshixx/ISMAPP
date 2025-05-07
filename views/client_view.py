@@ -4,12 +4,7 @@ Vista para la gestión de clientes en ISMAPP.
 import tkinter as tk
 from tkinter import messagebox
 import customtkinter as ctk
-from models.client import Client, ClientType
-from models.material import Material, MaterialType, PlasticSubtype
-from models.client_material import ClientMaterial
-from core.services.client_service import ClientService
-from core.services.material_service import MaterialService
-from core.services.client_material_service import ClientMaterialService
+from models.client import Client
 
 class ClientView(ctk.CTkFrame):
     """Vista para la gestión de clientes."""
@@ -25,22 +20,19 @@ class ClientView(ctk.CTkFrame):
         self.grid_rowconfigure(0, weight=1)
         self.grid_columnconfigure(0, weight=1)
         
-        # Obtener referencia al data_manager desde la ventana principal
+        # Obtener referencias a servicios desde ventana principal
         main_window = self.winfo_toplevel()
         try:
-            self.data_manager = main_window.data_manager
-            # Inicializar servicios
-            self.client_service = ClientService(self.data_manager)
-            self.material_service = MaterialService(self.data_manager)
-            self.client_material_service = ClientMaterialService(self.data_manager)
+            self.client_service = main_window.services.get("ClientService")
+            self.material_service = main_window.services.get("MaterialService")
         except AttributeError:
-            messagebox.showerror("Error", "No se pudo acceder al gestor de datos")
+            messagebox.showerror("Error", "No se pudo acceder a los servicios necesarios")
             return
         
-        # Variables para almacenar datos
+        # Variables para control
         self.clients = []
         self.current_client = None
-        self.filtered_clients = []
+        self.client_materials = []
         
         # Crear UI
         self._create_ui()
@@ -49,381 +41,668 @@ class ClientView(ctk.CTkFrame):
         self._load_clients()
     
     def _create_ui(self):
-        """Crea la interfaz de usuario del módulo."""
-        # Frame contenedor principal (scrollable)
-        self.main_container = ctk.CTkScrollableFrame(self)
-        self.main_container.grid(row=0, column=0, sticky="nsew", padx=10, pady=10)
+        """Crea la interfaz de usuario."""
+        # Crear panel dividido (split view)
+        self.split_view = ctk.CTkPanedWindow(self, orientation="horizontal")
+        self.split_view.grid(row=0, column=0, sticky="nsew", padx=10, pady=10)
         
-        # Título del módulo
-        header_frame = ctk.CTkFrame(self.main_container, fg_color="transparent")
-        header_frame.pack(fill="x", pady=(0, 15))
+        # Panel izquierdo (lista de clientes)
+        self.left_panel = ctk.CTkFrame(self.split_view)
+        self.left_panel.grid_rowconfigure(1, weight=1)
+        self.left_panel.grid_columnconfigure(0, weight=1)
+        
+        # Panel derecho (detalle del cliente)
+        self.right_panel = ctk.CTkFrame(self.split_view)
+        self.right_panel.grid_rowconfigure(0, weight=1)
+        self.right_panel.grid_columnconfigure(0, weight=1)
+        
+        self.split_view.add(self.left_panel)
+        self.split_view.add(self.right_panel)
+        
+        # Crear componentes del panel izquierdo (lista de clientes)
+        self._create_left_panel()
+        
+        # Crear componentes del panel derecho (detalle y materiales)
+        self._create_right_panel()
+    
+    def _create_left_panel(self):
+        """Configura el panel izquierdo con la lista de clientes."""
+        # Header con título y botón de nuevo cliente
+        header_frame = ctk.CTkFrame(self.left_panel, fg_color="transparent")
+        header_frame.grid(row=0, column=0, sticky="ew", pady=(0, 10))
         
         ctk.CTkLabel(
             header_frame,
-            text="Gestión de Clientes",
-            font=ctk.CTkFont(size=22, weight="bold")
+            text="Clientes",
+            font=ctk.CTkFont(size=20, weight="bold")
         ).pack(side="left")
         
         # Botón para crear nuevo cliente
-        self.add_button = ctk.CTkButton(
+        ctk.CTkButton(
             header_frame,
-            text="+ Nuevo Cliente",
-            command=self._show_edit_dialog,
-            width=130
+            text="+ Nuevo",
+            command=self._create_client,
+            width=100
+        ).pack(side="right")
+        
+        # Frame para filtros y búsqueda
+        filter_frame = ctk.CTkFrame(self.left_panel)
+        filter_frame.grid(row=1, column=0, sticky="ew", pady=(0, 10))
+        
+        # Combobox para filtrar por tipo de cliente
+        self.filter_var = tk.StringVar(value="Todos")
+        type_filter = ctk.CTkComboBox(
+            filter_frame,
+            values=["Todos", "Compradores", "Proveedores", "Ambos"],
+            variable=self.filter_var,
+            state="readonly",
+            width=120
         )
-        self.add_button.pack(side="right", padx=10)
+        type_filter.grid(row=0, column=0, padx=5, pady=5)
+        type_filter.bind("<<ComboboxSelected>>", self._apply_filter)
         
-        # Frame para búsqueda y filtros
-        search_frame = ctk.CTkFrame(self.main_container, fg_color="transparent")
-        search_frame.pack(fill="x", pady=(0, 15))
-        
-        # Barra de búsqueda
+        # Campo de búsqueda
         self.search_var = tk.StringVar()
-        self.search_var.trace_add("write", lambda *args: self._filter_clients())
+        self.search_var.trace_add("write", self._apply_filter)
         
         search_entry = ctk.CTkEntry(
-            search_frame,
-            placeholder_text="Buscar cliente...",
-            width=300,
+            filter_frame, 
+            placeholder_text="Buscar...",
             textvariable=self.search_var
         )
-        search_entry.pack(side="left", fill="x", expand=True, padx=(0, 10))
+        search_entry.grid(row=0, column=1, padx=5, pady=5, sticky="ew")
+        filter_frame.columnconfigure(1, weight=1)
         
-        # Filtro de tipo de cliente
-        filter_frame = ctk.CTkFrame(search_frame, fg_color="transparent")
-        filter_frame.pack(side="right")
+        # Lista de clientes con scroll
+        self.clients_frame = ctk.CTkScrollableFrame(self.left_panel)
+        self.clients_frame.grid(row=2, column=0, sticky="nsew", pady=10)
+        self.left_panel.rowconfigure(2, weight=1)
+    
+    def _create_right_panel(self):
+        """Configura el panel derecho con los detalles del cliente."""
+        # Crear notebook/pestañas
+        self.tabs = ctk.CTkTabview(self.right_panel)
+        self.tabs.grid(row=0, column=0, sticky="nsew", padx=5, pady=5)
         
-        ctk.CTkLabel(filter_frame, text="Filtrar por:").pack(side="left", padx=(0, 5))
+        # Añadir pestañas
+        self.tabs.add("Detalles")
+        self.tabs.add("Materiales")
         
-        self.filter_var = tk.StringVar(value="all")
+        # Configurar pestaña de detalles
+        self._setup_details_tab(self.tabs.tab("Detalles"))
         
-        # Opciones de filtro
-        filter_options = {
-            "all": "Todos",
-            ClientType.BUYER: "Compradores",
-            ClientType.SUPPLIER: "Proveedores"
+        # Configurar pestaña de materiales
+        self._setup_materials_tab(self.tabs.tab("Materiales"))
+    
+    def _setup_details_tab(self, parent):
+        """Configura la pestaña de detalles del cliente."""
+        # Panel de detalles con scroll
+        details_scroll = ctk.CTkScrollableFrame(parent)
+        details_scroll.pack(fill="both", expand=True, padx=5, pady=5)
+        
+        # Contenedor del formulario
+        form_frame = ctk.CTkFrame(details_scroll, fg_color="transparent")
+        form_frame.pack(fill="x", expand=True, pady=10)
+        
+        # Crear variables para el formulario
+        self.form_vars = {
+            "name": tk.StringVar(),
+            "business_name": tk.StringVar(),
+            "rut": tk.StringVar(),
+            "address": tk.StringVar(),
+            "phone": tk.StringVar(),
+            "email": tk.StringVar(),
+            "contact_person": tk.StringVar(),
+            "notes": tk.StringVar(),
+            "client_type": tk.StringVar(value="both"),
         }
         
-        filter_menu = ctk.CTkOptionMenu(
-            filter_frame,
-            values=list(filter_options.values()),
-            command=lambda choice: self._set_filter(
-                next(key for key, value in filter_options.items() if value == choice)
-            )
+        # Nombre del cliente
+        ctk.CTkLabel(form_frame, text="Nombre:").grid(row=0, column=0, sticky="w", pady=(10, 0))
+        self.name_entry = ctk.CTkEntry(form_frame, textvariable=self.form_vars["name"], width=300)
+        self.name_entry.grid(row=1, column=0, sticky="ew", pady=(0, 10))
+        
+        # Razón social
+        ctk.CTkLabel(form_frame, text="Razón Social:").grid(row=2, column=0, sticky="w", pady=(10, 0))
+        ctk.CTkEntry(form_frame, textvariable=self.form_vars["business_name"]).grid(row=3, column=0, sticky="ew", pady=(0, 10))
+        
+        # RUT
+        ctk.CTkLabel(form_frame, text="RUT:").grid(row=4, column=0, sticky="w", pady=(10, 0))
+        ctk.CTkEntry(form_frame, textvariable=self.form_vars["rut"]).grid(row=5, column=0, sticky="ew", pady=(0, 10))
+        
+        # Dirección
+        ctk.CTkLabel(form_frame, text="Dirección:").grid(row=6, column=0, sticky="w", pady=(10, 0))
+        ctk.CTkEntry(form_frame, textvariable=self.form_vars["address"]).grid(row=7, column=0, sticky="ew", pady=(0, 10))
+        
+        # Teléfono
+        ctk.CTkLabel(form_frame, text="Teléfono:").grid(row=8, column=0, sticky="w", pady=(10, 0))
+        ctk.CTkEntry(form_frame, textvariable=self.form_vars["phone"]).grid(row=9, column=0, sticky="ew", pady=(0, 10))
+        
+        # Email
+        ctk.CTkLabel(form_frame, text="Email:").grid(row=10, column=0, sticky="w", pady=(10, 0))
+        ctk.CTkEntry(form_frame, textvariable=self.form_vars["email"]).grid(row=11, column=0, sticky="ew", pady=(0, 10))
+        
+        # Persona de contacto
+        ctk.CTkLabel(form_frame, text="Persona de contacto:").grid(row=12, column=0, sticky="w", pady=(10, 0))
+        ctk.CTkEntry(form_frame, textvariable=self.form_vars["contact_person"]).grid(row=13, column=0, sticky="ew", pady=(0, 10))
+        
+        # Notas
+        ctk.CTkLabel(form_frame, text="Notas:").grid(row=14, column=0, sticky="w", pady=(10, 0))
+        ctk.CTkEntry(form_frame, textvariable=self.form_vars["notes"], height=50).grid(row=15, column=0, sticky="ew", pady=(0, 10))
+        
+        # Tipo de cliente
+        ctk.CTkLabel(form_frame, text="Tipo de cliente:").grid(row=16, column=0, sticky="w", pady=(10, 0))
+        
+        type_frame = ctk.CTkFrame(form_frame, fg_color="transparent")
+        type_frame.grid(row=17, column=0, sticky="ew", pady=(0, 20))
+        
+        # Radio buttons para tipo de cliente
+        ctk.CTkRadioButton(
+            type_frame, 
+            text="Comprador", 
+            variable=self.form_vars["client_type"],
+            value="buyer"
+        ).grid(row=0, column=0, padx=(0, 10))
+        
+        ctk.CTkRadioButton(
+            type_frame, 
+            text="Proveedor", 
+            variable=self.form_vars["client_type"],
+            value="supplier"
+        ).grid(row=0, column=1, padx=10)
+        
+        ctk.CTkRadioButton(
+            type_frame, 
+            text="Ambos", 
+            variable=self.form_vars["client_type"],
+            value="both"
+        ).grid(row=0, column=2, padx=10)
+        
+        # Botones de acción
+        btn_frame = ctk.CTkFrame(form_frame, fg_color="transparent")
+        btn_frame.grid(row=18, column=0, sticky="ew", pady=20)
+        
+        self.save_btn = ctk.CTkButton(
+            btn_frame,
+            text="Guardar",
+            command=self._save_client,
+            state="disabled"
         )
-        filter_menu.pack(side="left")
+        self.save_btn.pack(side="right", padx=5)
         
-        # Frame para la tabla de clientes
-        table_container = ctk.CTkFrame(self.main_container)
-        table_container.pack(fill="both", expand=True)
+        self.delete_btn = ctk.CTkButton(
+            btn_frame,
+            text="Eliminar",
+            command=self._delete_client,
+            fg_color="#E76F51",
+            state="disabled"
+        )
+        self.delete_btn.pack(side="right", padx=5)
         
-        # Cabecera de la tabla
-        columns = ["Nombre", "Razón Social", "RUT", "Tipo", "Teléfono", "Acciones"]
-        header_frame = ctk.CTkFrame(table_container, fg_color=("#DDDDDD", "#2B2B2B"))
-        header_frame.pack(fill="x")
-        
-        # Configurar ancho de columnas
-        widths = [0.22, 0.22, 0.15, 0.13, 0.1, 0.18]  # Proporciones
-        for i, col in enumerate(columns):
-            col_frame = ctk.CTkFrame(header_frame, fg_color="transparent")
-            col_frame.pack(side="left", fill="both", expand=True, padx=2, pady=5)
-            if i == len(columns) - 1:  # Si es la última columna (Acciones)
-                col_frame.configure(width=150)  # Ancho fijo para acciones
-            else:
-                col_frame.configure(width=int(700 * widths[i]))  # Ancho proporcional
-                
-            ctk.CTkLabel(
-                col_frame, 
-                text=col,
-                font=ctk.CTkFont(weight="bold")
-            ).pack()
-        
-        # Contenedor para filas de clientes
-        self.client_rows_frame = ctk.CTkScrollableFrame(table_container, fg_color="transparent")
-        self.client_rows_frame.pack(fill="both", expand=True)
+        # Expandir columnas para llenar el espacio horizontal
+        form_frame.columnconfigure(0, weight=1)
     
-    def _set_filter(self, filter_type):
-        """
-        Establece el filtro por tipo de cliente.
+    def _setup_materials_tab(self, parent):
+        """Configura la pestaña de materiales del cliente."""
+        # Frame para la lista de materiales
+        materials_frame = ctk.CTkFrame(parent)
+        materials_frame.pack(fill="both", expand=True, padx=5, pady=5)
+        materials_frame.grid_rowconfigure(1, weight=1)
+        materials_frame.grid_columnconfigure(0, weight=1)
         
-        Args:
-            filter_type (str): Tipo de filtro a aplicar
-        """
-        self.filter_var.set(filter_type)
-        self._filter_clients()
+        # Encabezado con botón para añadir material
+        header_frame = ctk.CTkFrame(materials_frame, fg_color="transparent")
+        header_frame.grid(row=0, column=0, sticky="ew", pady=(0, 10))
+        
+        ctk.CTkLabel(
+            header_frame, 
+            text="Materiales asociados", 
+            font=ctk.CTkFont(size=16, weight="bold")
+        ).pack(side="left")
+        
+        self.add_material_btn = ctk.CTkButton(
+            header_frame,
+            text="+ Añadir Material",
+            command=self._show_add_material_dialog,
+            width=130,
+            state="disabled"
+        )
+        self.add_material_btn.pack(side="right")
+        
+        # Tabla/lista de materiales con scroll
+        self.materials_list = ctk.CTkScrollableFrame(materials_frame)
+        self.materials_list.grid(row=1, column=0, sticky="nsew", pady=5)
     
     def _load_clients(self):
         """Carga la lista de clientes desde la base de datos."""
-        # Limpiar lista actual
         self.clients = self.client_service.get_all_clients()
-        self._filter_clients()
+        self._update_clients_list()
     
-    def _filter_clients(self):
-        """Filtra la lista de clientes según búsqueda y filtros."""
-        search_term = self.search_var.get().lower().strip()
+    def _update_clients_list(self):
+        """Actualiza la lista visual de clientes según filtros."""
+        # Limpiar lista actual
+        for widget in self.clients_frame.winfo_children():
+            widget.destroy()
+            
+        # Obtener filtros
+        search_term = self.search_var.get().lower()
         filter_type = self.filter_var.get()
         
-        if filter_type == "all":
-            # Filtrar solo por término de búsqueda
-            if not search_term:
-                self.filtered_clients = self.clients.copy()
-            else:
-                self.filtered_clients = [
-                    client for client in self.clients
-                    if (search_term in client.name.lower() or
-                        search_term in client.business_name.lower() or
-                        search_term in client.rut.lower() or
-                        search_term in client.contact_person.lower())
-                ]
-        else:
-            # Filtrar por tipo y término de búsqueda
-            if not search_term:
-                self.filtered_clients = [
-                    client for client in self.clients
-                    if (filter_type == ClientType.BUYER and client.is_buyer()) or
-                       (filter_type == ClientType.SUPPLIER and client.is_supplier())
-                ]
-            else:
-                self.filtered_clients = [
-                    client for client in self.clients
-                    if ((filter_type == ClientType.BUYER and client.is_buyer()) or
-                        (filter_type == ClientType.SUPPLIER and client.is_supplier())) and
-                       (search_term in client.name.lower() or
-                        search_term in client.business_name.lower() or
-                        search_term in client.rut.lower() or
-                        search_term in client.contact_person.lower())
-                ]
+        # Mapear el filtro a los valores de la base de datos
+        type_mapping = {
+            "Todos": None,
+            "Compradores": "buyer",
+            "Proveedores": "supplier",
+            "Ambos": "both"
+        }
+        selected_type = type_mapping.get(filter_type)
         
-        self._update_client_table()
-    
-    def _update_client_table(self):
-        """Actualiza la tabla de clientes en la UI."""
-        # Limpiar tabla actual
-        for widget in self.client_rows_frame.winfo_children():
-            widget.destroy()
+        # Filtrar clientes
+        filtered_clients = self.clients
         
-        # Verificar si hay clientes para mostrar
-        if not self.filtered_clients:
-            no_data_label = ctk.CTkLabel(
-                self.client_rows_frame,
+        # Filtrar por tipo
+        if selected_type:
+            filtered_clients = [c for c in filtered_clients if c.client_type == selected_type]
+            
+        # Filtrar por término de búsqueda
+        if search_term:
+            filtered_clients = [
+                c for c in filtered_clients 
+                if search_term in c.name.lower() or 
+                   search_term in c.business_name.lower() or
+                   search_term in (c.rut.lower() if c.rut else "") or
+                   search_term in (c.contact_person.lower() if c.contact_person else "")
+            ]
+        
+        # Mostrar mensaje si no hay clientes
+        if not filtered_clients:
+            no_results = ctk.CTkLabel(
+                self.clients_frame,
                 text="No se encontraron clientes",
                 font=ctk.CTkFont(size=14),
-                text_color="gray60"
+                text_color="gray"
             )
-            no_data_label.pack(pady=30)
+            no_results.pack(pady=20)
             return
         
-        # Crear filas para cada cliente
-        for i, client in enumerate(self.filtered_clients):
-            row_color = ("#F5F5F5", "#2D2D2D") if i % 2 == 0 else ("#FFFFFF", "#333333")
-            row_frame = ctk.CTkFrame(self.client_rows_frame, fg_color=row_color, corner_radius=0)
-            row_frame.pack(fill="x", pady=1)
+        # Crear elementos visuales para cada cliente
+        for i, client in enumerate(filtered_clients):
+            # Alternar colores para mejor visualización
+            bg_color = "#F0F0F0" if i % 2 == 0 else "#FFFFFF"
             
-            # Nombre
-            name_frame = ctk.CTkFrame(row_frame, fg_color="transparent", width=150)
-            name_frame.pack(side="left", fill="both", expand=True, padx=2, pady=8)
-            ctk.CTkLabel(name_frame, text=client.name).pack(anchor="w", padx=5)
+            client_frame = ctk.CTkFrame(self.clients_frame)
+            client_frame.pack(fill="x", pady=2)
             
-            # Razón Social
-            business_frame = ctk.CTkFrame(row_frame, fg_color="transparent", width=150)
-            business_frame.pack(side="left", fill="both", expand=True, padx=2, pady=8)
-            ctk.CTkLabel(business_frame, text=client.business_name).pack(anchor="w", padx=5)
+            # Al hacer clic, seleccionar el cliente
+            client_frame.bind("<Button-1>", lambda e, c=client: self._select_client(c))
+            
+            # Nombre del cliente
+            name_label = ctk.CTkLabel(
+                client_frame,
+                text=client.name,
+                font=ctk.CTkFont(weight="bold")
+            )
+            name_label.bind("<Button-1>", lambda e, c=client: self._select_client(c))
+            name_label.pack(anchor="w", pady=(5, 0), padx=10)
             
             # RUT
-            rut_frame = ctk.CTkFrame(row_frame, fg_color="transparent", width=100)
-            rut_frame.pack(side="left", fill="both", expand=True, padx=2, pady=8)
-            ctk.CTkLabel(rut_frame, text=client.rut).pack(anchor="w", padx=5)
+            info_frame = ctk.CTkFrame(client_frame, fg_color="transparent")
+            info_frame.pack(fill="x", padx=10, pady=(0, 5))
             
-            # Tipo de cliente
-            type_frame = ctk.CTkFrame(row_frame, fg_color="transparent", width=90)
-            type_frame.pack(side="left", fill="both", expand=True, padx=2, pady=8)
-            
-            type_text = ClientType.get_display_name(client.client_type)
-            type_color = {
-                ClientType.BUYER: "#4CAF50",
-                ClientType.SUPPLIER: "#2196F3",
-                ClientType.BOTH: "#9C27B0"
-            }.get(client.client_type, "gray60")
-            
-            ctk.CTkLabel(
-                type_frame, 
-                text=type_text,
-                text_color=type_color,
-                font=ctk.CTkFont(size=12, weight="bold")
-            ).pack(anchor="w", padx=5)
-            
-            # Teléfono
-            phone_frame = ctk.CTkFrame(row_frame, fg_color="transparent", width=70)
-            phone_frame.pack(side="left", fill="both", expand=True, padx=2, pady=8)
-            ctk.CTkLabel(phone_frame, text=client.phone).pack(anchor="w", padx=5)
-            
-            # Acciones
-            actions_frame = ctk.CTkFrame(row_frame, fg_color="transparent", width=120)
-            actions_frame.pack(side="left", fill="both", padx=2, pady=3)
-            
-            # Botón materiales
-            materials_btn = ctk.CTkButton(
-                actions_frame,
-                text="📦",
-                width=30,
-                command=lambda c=client: self._show_materials_dialog(c),
-                fg_color=("#5D87B4", "#2D6A9A")
+            rut_label = ctk.CTkLabel(
+                info_frame,
+                text=f"RUT: {client.rut}" if client.rut else "",
+                font=ctk.CTkFont(size=12)
             )
-            materials_btn.pack(side="left", padx=2)
+            rut_label.bind("<Button-1>", lambda e, c=client: self._select_client(c))
+            rut_label.pack(side="left")
             
-            # Botón editar
-            edit_btn = ctk.CTkButton(
-                actions_frame,
-                text="✏️",
-                width=30,
-                command=lambda c=client: self._show_edit_dialog(c),
-                fg_color=("#6E9075", "#2D6A6A")
-            )
-            edit_btn.pack(side="left", padx=2)
+            # Tipo
+            type_mapping = {
+                "buyer": "Comprador",
+                "supplier": "Proveedor",
+                "both": "Ambos"
+            }
             
-            # Botón eliminar
-            delete_btn = ctk.CTkButton(
-                actions_frame,
-                text="🗑️",
-                width=30,
-                command=lambda c=client: self._confirm_delete(c),
-                fg_color=("#BC7777", "#AA5555")
+            type_label = ctk.CTkLabel(
+                info_frame,
+                text=type_mapping.get(client.client_type, ""),
+                font=ctk.CTkFont(size=12),
+                text_color="gray50"
             )
-            delete_btn.pack(side="left", padx=2)
+            type_label.bind("<Button-1>", lambda e, c=client: self._select_client(c))
+            type_label.pack(side="right")
     
-    def _show_edit_dialog(self, client=None):
+    def _apply_filter(self, *args):
+        """Aplica los filtros de búsqueda."""
+        self._update_clients_list()
+    
+    def _select_client(self, client):
         """
-        Muestra el diálogo para crear o editar un cliente.
+        Selecciona un cliente y muestra sus detalles.
         
         Args:
-            client (Client, optional): Cliente a editar, None para crear nuevo
+            client: Objeto Cliente a seleccionar
         """
-        self.current_client = client or Client()
+        self.current_client = client
+        
+        # Rellenar formulario con datos del cliente
+        self.form_vars["name"].set(client.name)
+        self.form_vars["business_name"].set(client.business_name)
+        self.form_vars["rut"].set(client.rut)
+        self.form_vars["address"].set(client.address or "")
+        self.form_vars["phone"].set(client.phone or "")
+        self.form_vars["email"].set(client.email or "")
+        self.form_vars["contact_person"].set(client.contact_person or "")
+        self.form_vars["notes"].set(client.notes or "")
+        self.form_vars["client_type"].set(client.client_type)
+        
+        # Activar botones de guardar y eliminar
+        self.save_btn.configure(state="normal")
+        self.delete_btn.configure(state="normal")
+        
+        # Activar botón de añadir material
+        self.add_material_btn.configure(state="normal")
+        
+        # Cambiar a la pestaña de detalles
+        self.tabs.set("Detalles")
+        
+        # Cargar materiales del cliente
+        self._load_client_materials()
+    
+    def _load_client_materials(self):
+        """Carga los materiales asociados al cliente actual."""
+        if not self.current_client:
+            return
+            
+        # Obtener materiales del cliente
+        self.client_materials = self.material_service.get_client_materials(self.current_client.id)
+        
+        # Limpiar lista actual
+        for widget in self.materials_list.winfo_children():
+            widget.destroy()
+            
+        # Si no hay materiales, mostrar mensaje
+        if not self.client_materials:
+            no_materials = ctk.CTkLabel(
+                self.materials_list,
+                text="Este cliente no tiene materiales asociados",
+                font=ctk.CTkFont(size=14),
+                text_color="gray"
+            )
+            no_materials.pack(pady=20)
+            return
+            
+        # Mostrar los materiales en la lista
+        for i, client_material in enumerate(self.client_materials):
+            material = client_material.material
+            
+            # Crear frame para el material
+            material_frame = ctk.CTkFrame(self.materials_list)
+            material_frame.pack(fill="x", pady=5)
+            
+            # Nombre y tipo de material
+            header_frame = ctk.CTkFrame(material_frame, fg_color="transparent")
+            header_frame.pack(fill="x", padx=10, pady=(5, 0))
+            
+            ctk.CTkLabel(
+                header_frame,
+                text=material.name,
+                font=ctk.CTkFont(weight="bold")
+            ).pack(side="left")
+            
+            ctk.CTkLabel(
+                header_frame,
+                text=material.material_type,
+                font=ctk.CTkFont(size=12),
+                text_color="gray50"
+            ).pack(side="right")
+            
+            # Precio y detalles
+            details_frame = ctk.CTkFrame(material_frame, fg_color="transparent")
+            details_frame.pack(fill="x", padx=10, pady=(0, 5))
+            
+            # Precio
+            price_text = f"Precio: ${client_material.price:.2f} / kg"
+            if client_material.includes_tax:
+                price_text += " (incluye impuestos)"
+                
+            ctk.CTkLabel(
+                details_frame,
+                text=price_text,
+                font=ctk.CTkFont(size=12)
+            ).pack(side="left")
+            
+            # Botones de acción
+            actions_frame = ctk.CTkFrame(material_frame, fg_color="transparent")
+            actions_frame.pack(fill="x", padx=10, pady=(0, 5))
+            
+            # Botón editar
+            ctk.CTkButton(
+                actions_frame,
+                text="Editar",
+                command=lambda cm=client_material: self._show_edit_material_dialog(cm),
+                width=80,
+                height=25,
+                fg_color="#2D6A6A"
+            ).pack(side="left", padx=(0, 5))
+            
+            # Botón eliminar
+            ctk.CTkButton(
+                actions_frame,
+                text="Eliminar",
+                command=lambda cm=client_material: self._remove_client_material(cm),
+                width=80,
+                height=25,
+                fg_color="#E76F51"
+            ).pack(side="left")
+    
+    def _create_client(self):
+        """Resetea el formulario para crear un nuevo cliente."""
+        self.current_client = None
+        
+        # Limpiar formulario
+        for var in self.form_vars.values():
+            var.set("")
+        self.form_vars["client_type"].set("both")
+        
+        # Activar botón guardar y desactivar botón eliminar
+        self.save_btn.configure(state="normal")
+        self.delete_btn.configure(state="disabled")
+        
+        # Desactivar botón de añadir material
+        self.add_material_btn.configure(state="disabled")
+        
+        # Cambiar a pestaña de detalles
+        self.tabs.set("Detalles")
+        
+        # Limpiar lista de materiales
+        for widget in self.materials_list.winfo_children():
+            widget.destroy()
+            
+        # Dar foco al campo de nombre
+        self.name_entry.focus_set()
+    
+    def _save_client(self):
+        """Guarda los cambios del cliente actual."""
+        # Validar campos requeridos
+        if not self.form_vars["name"].get().strip():
+            messagebox.showerror("Error", "El nombre es obligatorio")
+            return
+            
+        if not self.form_vars["business_name"].get().strip():
+            messagebox.showerror("Error", "La razón social es obligatoria")
+            return
+            
+        if not self.form_vars["rut"].get().strip():
+            messagebox.showerror("Error", "El RUT es obligatorio")
+            return
+        
+        # Crear o actualizar el objeto cliente
+        if self.current_client:
+            # Actualizar cliente existente
+            client = self.current_client
+        else:
+            # Crear nuevo cliente
+            client = Client()
+            
+        # Actualizar propiedades
+        client.name = self.form_vars["name"].get().strip()
+        client.business_name = self.form_vars["business_name"].get().strip()
+        client.rut = self.form_vars["rut"].get().strip()
+        client.address = self.form_vars["address"].get().strip()
+        client.phone = self.form_vars["phone"].get().strip()
+        client.email = self.form_vars["email"].get().strip()
+        client.contact_person = self.form_vars["contact_person"].get().strip()
+        client.notes = self.form_vars["notes"].get().strip()
+        client.client_type = self.form_vars["client_type"].get()
+        client.is_active = True
+        
+        # Guardar en base de datos
+        success = self.client_service.save_client(client)
+        
+        if success:
+            action = "actualizado" if self.current_client else "creado"
+            messagebox.showinfo("Éxito", f"Cliente {action} correctamente")
+            
+            # Actualizar cliente actual
+            self.current_client = client
+            
+            # Recargar lista de clientes
+            self._load_clients()
+            
+            # Habilitar botón de añadir material si es un cliente existente
+            self.add_material_btn.configure(state="normal")
+        else:
+            messagebox.showerror("Error", "Error al guardar el cliente")
+    
+    def _delete_client(self):
+        """Elimina el cliente actual."""
+        if not self.current_client:
+            return
+            
+        confirm = messagebox.askyesno(
+            "Confirmar eliminación", 
+            f"¿Está seguro de eliminar el cliente {self.current_client.name}?"
+        )
+        
+        if confirm:
+            success = self.client_service.delete_client(self.current_client.id)
+            
+            if success:
+                messagebox.showinfo("Éxito", "Cliente eliminado correctamente")
+                
+                # Recargar lista de clientes
+                self._load_clients()
+                
+                # Limpiar formulario
+                self._create_client()
+            else:
+                messagebox.showerror("Error", "Error al eliminar el cliente")
+    
+    def _show_add_material_dialog(self):
+        """Muestra el diálogo para añadir un material al cliente."""
+        if not self.current_client:
+            messagebox.showerror("Error", "Debe seleccionar un cliente primero")
+            return
+        
+        # Obtener lista de materiales disponibles para este cliente
+        available_materials = self.material_service.get_available_materials_for_client(
+            self.current_client.id)
+        
+        if not available_materials:
+            messagebox.showinfo("Información", 
+                             f"No hay materiales disponibles para asignar a {self.current_client.name}")
+            return
+        
+        # DEPURACIÓN: Verificar materiales disponibles
+        print(f"DEBUG: Materiales disponibles para cliente #{self.current_client.id}:")
+        for m in available_materials:
+            print(f"- ID: {m.id}, Nombre: {m.name}")
         
         # Crear ventana de diálogo
         dialog = ctk.CTkToplevel(self)
-        dialog.title("Nuevo Cliente" if client is None else "Editar Cliente")
-        dialog.geometry("600x750")
-        dialog.resizable(False, False)
+        dialog.title(f"Añadir Material a {self.current_client.name}")
+        dialog.geometry("500x500")
         
-        # Centrar ventana
-        dialog.update_idletasks()
-        x = (dialog.winfo_screenwidth() // 2) - (dialog.winfo_width() // 2)
-        y = (dialog.winfo_screenheight() // 2) - (dialog.winfo_height() // 2)
-        dialog.geometry(f'+{x}+{y}')
-        
-        # Contenedor principal con scroll
+        # Frame contenedor principal con scroll
         main_frame = ctk.CTkScrollableFrame(dialog)
         main_frame.pack(fill="both", expand=True, padx=20, pady=20)
         
         # Título
         ctk.CTkLabel(
             main_frame,
-            text="Datos del Cliente",
+            text="Seleccione Material",
             font=ctk.CTkFont(size=18, weight="bold")
         ).pack(pady=(0, 20), anchor="w")
         
-        # Form fields
-        form_frame = ctk.CTkFrame(main_frame, fg_color="transparent")
-        form_frame.pack(fill="x", pady=10)
+        # Variables
+        material_var = tk.StringVar()
+        price_var = tk.StringVar(value="0.0")
+        tax_var = tk.BooleanVar(value=False)
+        notes_var = tk.StringVar()
         
-        # Variables para campos
-        name_var = tk.StringVar(value=self.current_client.name)
-        business_var = tk.StringVar(value=self.current_client.business_name)
-        rut_var = tk.StringVar(value=self.current_client.rut)
-        address_var = tk.StringVar(value=self.current_client.address)
-        phone_var = tk.StringVar(value=self.current_client.phone)
-        email_var = tk.StringVar(value=self.current_client.email)
-        contact_var = tk.StringVar(value=self.current_client.contact_person)
-        notes_var = tk.StringVar(value=self.current_client.notes)
-        active_var = tk.BooleanVar(value=self.current_client.is_active)
-        client_type_var = tk.StringVar(value=self.current_client.client_type)
+        # Material (desplegable)
+        ctk.CTkLabel(main_frame, text="Material:").pack(anchor="w", pady=(10, 0))
         
-        # Función para crear campos con label
-        def create_field(parent, label_text, variable, row, is_required=False):
-            # Label
-            label_text = f"{label_text}{'*' if is_required else ''}"
-            ctk.CTkLabel(parent, text=label_text).grid(row=row, column=0, sticky="w", padx=5, pady=(10, 0))
+        # Crear diccionario para mapear nombres a objetos material
+        material_map = {f"{m.name} ({m.material_type})": m for m in available_materials}
+        material_options = list(material_map.keys())
+        
+        # Verificar si hay opciones antes de crear el ComboBox
+        if material_options:
+            material_dropdown = ctk.CTkComboBox(
+                main_frame,
+                values=material_options,
+                variable=material_var,
+                width=300,
+                state="readonly"
+            )
+            material_dropdown.pack(fill="x", pady=(0, 10))
             
-            # Entry
-            entry = ctk.CTkEntry(parent, textvariable=variable)
-            entry.grid(row=row+1, column=0, sticky="ew", padx=5, pady=(0, 10))
-            return entry
+            # Seleccionar el primer material por defecto
+            material_var.set(material_options[0])
+        else:
+            # En caso de que la lista esté vacía por alguna razón (no debería pasar, pero por seguridad)
+            ctk.CTkLabel(
+                main_frame, 
+                text="No hay materiales disponibles", 
+                text_color="red"
+            ).pack(pady=10)
+            
+            # Añadir un botón para cerrar el diálogo
+            ctk.CTkButton(
+                main_frame,
+                text="Cerrar",
+                command=dialog.destroy
+            ).pack(pady=20)
+            return
         
-        # Nombre (requerido)
-        name_entry = create_field(form_frame, "Nombre", name_var, 0, True)
-        name_entry.focus_set()  # Auto-focus
+        # Precio
+        ctk.CTkLabel(main_frame, text="Precio:").pack(anchor="w", pady=(10, 0))
         
-        # Razón Social (requerido)
-        business_entry = create_field(form_frame, "Razón Social", business_var, 2, True)
+        price_frame = ctk.CTkFrame(main_frame, fg_color="transparent")
+        price_frame.pack(fill="x", pady=(0, 10))
         
-        # RUT (requerido)
-        rut_entry = create_field(form_frame, "RUT", rut_var, 4, True)
+        price_entry = ctk.CTkEntry(price_frame, textvariable=price_var)
+        price_entry.pack(side="left", fill="x", expand=True)
         
-        # Teléfono
-        phone_entry = create_field(form_frame, "Teléfono", phone_var, 6)
+        ctk.CTkLabel(price_frame, text="$ / kg").pack(side="right", padx=5)
         
-        # Email
-        email_entry = create_field(form_frame, "Email", email_var, 8)
-        
-        # Persona de Contacto
-        contact_entry = create_field(form_frame, "Persona de Contacto", contact_var, 10)
-        
-        # Tipo de cliente (requerido)
-        ctk.CTkLabel(form_frame, text="Tipo de Cliente*").grid(row=12, column=0, sticky="w", padx=5, pady=(10, 0))
-        
-        type_frame = ctk.CTkFrame(form_frame, fg_color="transparent")
-        type_frame.grid(row=13, column=0, sticky="ew", padx=5, pady=(0, 10))
-        
-        # Opciones para tipo de cliente
-        buyer_rb = ctk.CTkRadioButton(
-            type_frame, 
-            text="Comprador", 
-            variable=client_type_var, 
-            value=ClientType.BUYER
-        )
-        buyer_rb.pack(side="left", padx=10)
-        
-        supplier_rb = ctk.CTkRadioButton(
-            type_frame, 
-            text="Proveedor", 
-            variable=client_type_var, 
-            value=ClientType.SUPPLIER
-        )
-        supplier_rb.pack(side="left", padx=10)
-        
-        both_rb = ctk.CTkRadioButton(
-            type_frame, 
-            text="Ambos", 
-            variable=client_type_var, 
-            value=ClientType.BOTH
-        )
-        both_rb.pack(side="left", padx=10)
-        
-        # Dirección
-        ctk.CTkLabel(form_frame, text="Dirección").grid(row=14, column=0, sticky="w", padx=5, pady=(10, 0))
-        address_entry = ctk.CTkTextbox(form_frame, height=60)
-        address_entry.grid(row=15, column=0, sticky="ew", padx=5, pady=(0, 10))
-        address_entry.insert("1.0", self.current_client.address)
-        
-        # Notas
-        ctk.CTkLabel(form_frame, text="Notas").grid(row=16, column=0, sticky="w", padx=5, pady=(10, 0))
-        notes_entry = ctk.CTkTextbox(form_frame, height=60)
-        notes_entry.grid(row=17, column=0, sticky="ew", padx=5, pady=(0, 10))
-        notes_entry.insert("1.0", self.current_client.notes)
-        
-        # Estado (activo/inactivo)
-        active_frame = ctk.CTkFrame(form_frame, fg_color="transparent")
-        active_frame.grid(row=18, column=0, sticky="w", padx=5, pady=10)
-        
-        active_switch = ctk.CTkSwitch(
-            active_frame, 
-            text="Cliente Activo",
-            variable=active_var,
+        # Incluye impuesto
+        tax_check = ctk.CTkCheckBox(
+            main_frame,
+            text="El precio incluye impuestos",
+            variable=tax_var,
             onvalue=True,
             offvalue=False
         )
-        active_switch.pack(side="left")
+        tax_check.pack(anchor="w", pady=10)
+        
+        # Notas
+        ctk.CTkLabel(main_frame, text="Notas:").pack(anchor="w", pady=(10, 0))
+        notes_entry = ctk.CTkEntry(main_frame, textvariable=notes_var)
+        notes_entry.pack(fill="x", pady=(0, 20))
         
         # Mensaje de error
         error_label = ctk.CTkLabel(main_frame, text="", text_color="red")
@@ -433,47 +712,41 @@ class ClientView(ctk.CTkFrame):
         btn_frame = ctk.CTkFrame(main_frame, fg_color="transparent")
         btn_frame.pack(fill="x", pady=20)
         
-        # Función para guardar cliente
-        def save_client():
-            # Validar campos requeridos
-            if not name_var.get().strip():
-                error_label.configure(text="El nombre es obligatorio")
-                name_entry.focus_set()
-                return
-                
-            if not business_var.get().strip():
-                error_label.configure(text="La razón social es obligatoria")
-                business_entry.focus_set()
-                return
-                
-            if not rut_var.get().strip():
-                error_label.configure(text="El RUT es obligatorio")
-                rut_entry.focus_set()
-                return
-                
-            if not client_type_var.get():
-                error_label.configure(text="Debe seleccionar un tipo de cliente")
+        def on_add_material():
+            if not material_var.get():
+                error_label.configure(text="Debe seleccionar un material")
                 return
             
-            # Actualizar objeto cliente
-            self.current_client.name = name_var.get().strip()
-            self.current_client.business_name = business_var.get().strip()
-            self.current_client.rut = rut_var.get().strip()
-            self.current_client.address = address_entry.get("1.0", "end-1c").strip()
-            self.current_client.phone = phone_var.get().strip()
-            self.current_client.email = email_var.get().strip()
-            self.current_client.contact_person = contact_var.get().strip()
-            self.current_client.notes = notes_entry.get("1.0", "end-1c").strip()
-            self.current_client.is_active = active_var.get()
-            self.current_client.client_type = client_type_var.get()
+            try:
+                price = float(price_var.get().replace(",", "."))
+                if price < 0:
+                    error_label.configure(text="El precio no puede ser negativo")
+                    return
+            except ValueError:
+                error_label.configure(text="El precio debe ser un número válido")
+                return
+                
+            selected_material = material_map.get(material_var.get())
+            if not selected_material:
+                error_label.configure(text="Material no válido")
+                return
+                
+            # Añadir material al cliente
+            success = self.material_service.assign_material_to_client(
+                client_id=self.current_client.id,
+                material_id=selected_material.id,
+                price=price,
+                includes_tax=tax_var.get(),
+                notes=notes_var.get()
+            )
             
-            # Guardar en la base de datos
-            if self.client_service.save_client(self.current_client):
-                messagebox.showinfo("Éxito", "Cliente guardado correctamente")
+            if success:
+                messagebox.showinfo("Éxito", f"Material '{selected_material.name}' añadido")
                 dialog.destroy()
-                self._load_clients()  # Recargar datos
+                # Actualizar la lista de materiales del cliente
+                self._load_client_materials()
             else:
-                error_label.configure(text="Error al guardar el cliente")
+                error_label.configure(text="No se pudo añadir el material")
         
         # Botón cancelar
         ctk.CTkButton(
@@ -487,716 +760,180 @@ class ClientView(ctk.CTkFrame):
         # Botón guardar
         ctk.CTkButton(
             btn_frame,
-            text="Guardar",
-            command=save_client,
+            text="Añadir",
+            command=on_add_material,
             width=100
         ).pack(side="right", padx=20)
         
-        # Bloquear ventana principal
+        # Centrar la ventana
+        dialog.update_idletasks()
+        width = dialog.winfo_width()
+        height = dialog.winfo_height()
+        x = (dialog.winfo_screenwidth() // 2) - (width // 2)
+        y = (dialog.winfo_screenheight() // 2) - (height // 2)
+        dialog.geometry(f'{width}x{height}+{x}+{y}')
+        
+        # Hacer modal
         dialog.transient(self)
         dialog.grab_set()
     
-    def _show_materials_dialog(self, client):
+    def _show_edit_material_dialog(self, client_material):
         """
-        Muestra el diálogo para gestionar materiales y precios del cliente.
+        Muestra el diálogo para editar un material del cliente.
         
         Args:
-            client (Client): Cliente para gestionar materiales
+            client_material: Objeto ClientMaterial a editar
         """
         # Crear ventana de diálogo
         dialog = ctk.CTkToplevel(self)
-        dialog.title(f"Materiales y Precios - {client.name}")
-        dialog.geometry("800x600")
-        dialog.resizable(True, True)
-        
-        # Centrar ventana
-        dialog.update_idletasks()
-        x = (dialog.winfo_screenwidth() // 2) - (dialog.winfo_width() // 2)
-        y = (dialog.winfo_screenheight() // 2) - (dialog.winfo_height() // 2)
-        dialog.geometry(f'+{x}+{y}')
-        
-        # Configurar grid
-        dialog.grid_rowconfigure(0, weight=1)
-        dialog.grid_columnconfigure(0, weight=1)
+        dialog.title(f"Editar Material - {client_material.material.name}")
+        dialog.geometry("450x400")
         
         # Contenedor principal con scroll
         main_frame = ctk.CTkScrollableFrame(dialog)
-        main_frame.grid(row=0, column=0, sticky="nsew", padx=20, pady=20)
+        main_frame.pack(fill="both", expand=True, padx=20, pady=20)
         
         # Título
-        header_frame = ctk.CTkFrame(main_frame, fg_color="transparent")
-        header_frame.pack(fill="x", pady=(0, 20))
+        ctk.CTkLabel(
+            main_frame,
+            text=f"Editar {client_material.material.name}",
+            font=ctk.CTkFont(size=18, weight="bold")
+        ).pack(pady=(0, 20), anchor="w")
+        
+        # Variables
+        price_var = tk.StringVar(value=str(client_material.price))
+        tax_var = tk.BooleanVar(value=client_material.includes_tax)
+        notes_var = tk.StringVar(value=client_material.notes or "")
+        
+        # Información del material
+        info_frame = ctk.CTkFrame(main_frame, fg_color=("#EDF6F9", "#202835"))
+        info_frame.pack(fill="x", pady=10)
         
         ctk.CTkLabel(
-            header_frame,
-            text=f"Materiales y Precios para {client.name}",
-            font=ctk.CTkFont(size=18, weight="bold")
-        ).pack(side="left")
+            info_frame,
+            text=f"Tipo: {client_material.material.material_type}",
+            font=ctk.CTkFont(size=12)
+        ).pack(anchor="w", padx=10, pady=(10, 0))
         
-        # Botón para agregar material
-        add_btn = ctk.CTkButton(
-            header_frame,
-            text="+ Agregar Material",
-            command=lambda: self._show_add_material_dialog(dialog, client),
-            width=150
+        if client_material.material.description:
+            ctk.CTkLabel(
+                info_frame,
+                text=f"Descripción: {client_material.material.description}",
+                font=ctk.CTkFont(size=12),
+                wraplength=380
+            ).pack(anchor="w", padx=10, pady=(5, 10))
+        
+        # Formulario
+        form_frame = ctk.CTkFrame(main_frame, fg_color="transparent")
+        form_frame.pack(fill="x", pady=10)
+        
+        # Precio
+        ctk.CTkLabel(form_frame, text="Precio:").pack(anchor="w", pady=(10, 0))
+        
+        price_frame = ctk.CTkFrame(form_frame, fg_color="transparent")
+        price_frame.pack(fill="x", pady=(0, 10))
+        
+        price_entry = ctk.CTkEntry(price_frame, textvariable=price_var)
+        price_entry.pack(side="left", fill="x", expand=True)
+        
+        ctk.CTkLabel(price_frame, text="$ / kg").pack(side="right", padx=5)
+        
+        # Incluye impuesto
+        tax_check = ctk.CTkCheckBox(
+            form_frame,
+            text="El precio incluye impuestos",
+            variable=tax_var,
+            onvalue=True,
+            offvalue=False
         )
-        add_btn.pack(side="right")
+        tax_check.pack(anchor="w", pady=10)
         
-        # Frame para la lista de materiales
-        materials_frame = ctk.CTkFrame(main_frame)
-        materials_frame.pack(fill="both", expand=True, pady=10)
+        # Notas
+        ctk.CTkLabel(form_frame, text="Notas:").pack(anchor="w", pady=(10, 0))
+        notes_entry = ctk.CTkEntry(form_frame, textvariable=notes_var, height=50)
+        notes_entry.pack(fill="x", pady=(0, 10))
         
-        # Cargar materiales del cliente
-        self._load_client_materials(client, materials_frame)
+        # Mensaje de error
+        error_label = ctk.CTkLabel(main_frame, text="", text_color="red")
+        error_label.pack(fill="x", pady=(10, 0))
         
-        # Bloquear ventana principal
+        # Botones
+        btn_frame = ctk.CTkFrame(main_frame, fg_color="transparent")
+        btn_frame.pack(fill="x", pady=20)
+        
+        def on_edit_material():
+            try:
+                price = float(price_var.get().replace(",", "."))
+                if price < 0:
+                    error_label.configure(text="El precio no puede ser negativo")
+                    return
+            except ValueError:
+                error_label.configure(text="El precio debe ser un número válido")
+                return
+                
+            # Actualizar objeto
+            client_material.price = price
+            client_material.includes_tax = tax_var.get()
+            client_material.notes = notes_var.get()
+            
+            # Guardar cambios
+            success = self.material_service.update_client_material(client_material)
+            
+            if success:
+                messagebox.showinfo("Éxito", "Material actualizado correctamente")
+                dialog.destroy()
+                # Actualizar lista de materiales
+                self._load_client_materials()
+            else:
+                error_label.configure(text="No se pudo actualizar el material")
+        
+        # Botón cancelar
+        ctk.CTkButton(
+            btn_frame,
+            text="Cancelar",
+            command=dialog.destroy,
+            fg_color="gray50",
+            width=100
+        ).pack(side="left", padx=10)
+        
+        # Botón actualizar
+        ctk.CTkButton(
+            btn_frame,
+            text="Actualizar",
+            command=on_edit_material,
+            width=100
+        ).pack(side="right", padx=10)
+        
+        # Centrar la ventana
+        dialog.update_idletasks()
+        width = dialog.winfo_width()
+        height = dialog.winfo_height()
+        x = (dialog.winfo_screenwidth() // 2) - (width // 2)
+        y = (dialog.winfo_screenheight() // 2) - (height // 2)
+        dialog.geometry(f'+{x}+{y}')
+        
+        # Hacer modal
         dialog.transient(self)
         dialog.grab_set()
     
-    def _load_client_materials(self, client, container):
+    def _remove_client_material(self, client_material):
         """
-        Carga y muestra los materiales asociados al cliente.
+        Elimina un material del cliente.
         
         Args:
-            client (Client): Cliente del que mostrar materiales
-            container (CTkFrame): Contenedor donde mostrar los materiales
+            client_material: Objeto ClientMaterial a eliminar
         """
-        # Limpiar contenedor
-        for widget in container.winfo_children():
-            widget.destroy()
-        
-        # Obtener materiales asociados al cliente
-        client_materials = self.client_material_service.get_client_materials(client.id)
-        
-        # Verificar si hay materiales para mostrar
-        if not client_materials:
-            ctk.CTkLabel(
-                container,
-                text="No hay materiales asociados a este cliente",
-                font=ctk.CTkFont(size=14),
-                text_color="gray60"
-            ).pack(pady=30)
-            return
-        
-        # Cabecera
-        header_frame = ctk.CTkFrame(container, fg_color=("#DDDDDD", "#2B2B2B"))
-        header_frame.pack(fill="x")
-        
-        # Columnas
-        columns = ["Material", "Tipo", "Precio", "Incluye IVA", "Acciones"]
-        widths = [0.35, 0.18, 0.17, 0.15, 0.15]  # Proporciones
-        
-        for i, col in enumerate(columns):
-            col_frame = ctk.CTkFrame(header_frame, fg_color="transparent")
-            col_frame.pack(side="left", fill="both", expand=True, padx=2, pady=5)
-            if i == len(columns) - 1:  # Si es la última columna (Acciones)
-                col_frame.configure(width=100)  # Ancho fijo para acciones
-            else:
-                col_frame.configure(width=int(700 * widths[i]))  # Ancho proporcional
-                
-            ctk.CTkLabel(
-                col_frame, 
-                text=col,
-                font=ctk.CTkFont(weight="bold")
-            ).pack()
-        
-        # Contenedor para las filas de materiales
-        materials_list = ctk.CTkScrollableFrame(container, fg_color="transparent")
-        materials_list.pack(fill="both", expand=True, pady=5)
-        
-        # Crear filas para cada material
-        for i, (client_material, material) in enumerate(client_materials):
-            row_color = ("#F5F5F5", "#2D2D2D") if i % 2 == 0 else ("#FFFFFF", "#333333")
-            row_frame = ctk.CTkFrame(materials_list, fg_color=row_color, corner_radius=0)
-            row_frame.pack(fill="x", pady=1)
-            
-            # Material
-            name_frame = ctk.CTkFrame(row_frame, fg_color="transparent")
-            name_frame.pack(side="left", fill="both", expand=True, padx=2, pady=8)
-            
-            material_name = material.get_full_name()
-            ctk.CTkLabel(name_frame, text=material_name).pack(anchor="w", padx=5)
-            
-            # Tipo
-            type_frame = ctk.CTkFrame(row_frame, fg_color="transparent")
-            type_frame.pack(side="left", fill="both", expand=True, padx=2, pady=8)
-            
-            material_type = MaterialType.get_display_name(material.material_type)
-            ctk.CTkLabel(type_frame, text=material_type).pack(anchor="w", padx=5)
-            
-            # Precio
-            price_frame = ctk.CTkFrame(row_frame, fg_color="transparent")
-            price_frame.pack(side="left", fill="both", expand=True, padx=2, pady=8)
-            
-            price_text = f"${client_material.price:,.2f}"
-            ctk.CTkLabel(price_frame, text=price_text).pack(anchor="w", padx=5)
-            
-            # Incluye IVA
-            tax_frame = ctk.CTkFrame(row_frame, fg_color="transparent")
-            tax_frame.pack(side="left", fill="both", expand=True, padx=2, pady=8)
-            
-            tax_text = "Sí" if client_material.includes_tax else "No"
-            ctk.CTkLabel(tax_frame, text=tax_text).pack(anchor="w", padx=5)
-            
-            # Acciones
-            actions_frame = ctk.CTkFrame(row_frame, fg_color="transparent")
-            actions_frame.pack(side="left", fill="both", padx=2, pady=3)
-            
-            # Botón editar
-            edit_btn = ctk.CTkButton(
-                actions_frame,
-                text="✏️",
-                width=30,
-                command=lambda c=client, cm=client_material, m=material: 
-                         self._show_edit_price_dialog(container.master, c, cm, m),
-                fg_color=("#6E9075", "#2D6A6A")
-            )
-            edit_btn.pack(side="left", padx=2)
-            
-            # Botón eliminar
-            delete_btn = ctk.CTkButton(
-                actions_frame,
-                text="🗑️",
-                width=30,
-                command=lambda cm=client_material, m=material: 
-                         self._confirm_delete_material(container.master, client, cm, m),
-                fg_color=("#BC7777", "#AA5555")
-            )
-            delete_btn.pack(side="left", padx=2)
-    
-    def _show_add_material_dialog(self, parent_dialog, client):
-        """
-        Muestra el diálogo para agregar un material al cliente.
-        
-        Args:
-            parent_dialog: Diálogo padre
-            client (Client): Cliente al que agregar el material
-        """
-        # Crear ventana de diálogo
-        dialog = ctk.CTkToplevel(parent_dialog)
-        dialog.title("Agregar Material")
-        dialog.geometry("550x550")
-        dialog.resizable(False, False)
-        
-        # Centrar ventana
-        dialog.update_idletasks()
-        x = (dialog.winfo_screenwidth() // 2) - (dialog.winfo_width() // 2)
-        y = (dialog.winfo_screenheight() // 2) - (dialog.winfo_height() // 2)
-        dialog.geometry(f'+{x}+{y}')
-        
-        # Contenedor principal con scroll
-        main_frame = ctk.CTkScrollableFrame(dialog)
-        main_frame.pack(fill="both", expand=True, padx=20, pady=20)
-        
-        # Título
-        ctk.CTkLabel(
-            main_frame,
-            text="Agregar Material al Cliente",
-            font=ctk.CTkFont(size=16, weight="bold")
-        ).pack(pady=(0, 20))
-        
-        # Variables para campos
-        material_type_var = tk.StringVar(value="existing")  # existing o custom
-        existing_material_var = tk.StringVar()
-        custom_material_var = tk.StringVar()
-        is_plastic_var = tk.BooleanVar(value=True)
-        plastic_subtype_var = tk.StringVar(value=PlasticSubtype.CANDY)
-        plastic_state_var = tk.StringVar(value="clean")
-        custom_subtype_var = tk.StringVar()
-        price_var = tk.StringVar(value="0.00")
-        tax_var = tk.BooleanVar(value=False)
-        
-        # Función para actualizar visibilidad de campos
-        def update_fields(*args):
-            material_choice = material_type_var.get()
-            
-            if material_choice == "existing":
-                existing_frame.pack(fill="x", pady=10)
-                custom_frame.pack_forget()
-            else:  # custom
-                existing_frame.pack_forget()
-                custom_frame.pack(fill="x", pady=10)
-                
-                # Actualizar campos de subtipo plástico
-                is_plastic = is_plastic_var.get()
-                subtype = plastic_subtype_var.get()
-                
-                if is_plastic:
-                    plastic_subtype_label.pack(anchor="w", pady=(10, 0))
-                    plastic_subtype_menu.pack(fill="x", pady=(0, 10))
-                    plastic_state_label.pack(anchor="w", pady=(10, 0))
-                    plastic_state_frame.pack(fill="x", pady=(0, 10))
-                    
-                    # Mostrar/ocultar campo de subtipo personalizado
-                    if subtype == PlasticSubtype.OTHER:
-                        custom_plastic_label.pack(anchor="w", pady=(10, 0))
-                        custom_plastic_entry.pack(fill="x", pady=(0, 10))
-                    else:
-                        custom_plastic_label.pack_forget()
-                        custom_plastic_entry.pack_forget()
-                else:
-                    plastic_subtype_label.pack_forget()
-                    plastic_subtype_menu.pack_forget()
-                    plastic_state_label.pack_forget()
-                    plastic_state_frame.pack_forget()
-                    custom_plastic_label.pack_forget()
-                    custom_plastic_entry.pack_forget()
-        
-        # Form
-        form_frame = ctk.CTkFrame(main_frame, fg_color="transparent")
-        form_frame.pack(fill="x", pady=10)
-        
-        # Opciones de material (existente o personalizado)
-        options_frame = ctk.CTkFrame(form_frame, fg_color="transparent")
-        options_frame.pack(fill="x", pady=10)
-        
-        ctk.CTkLabel(options_frame, text="Tipo de Material:").pack(anchor="w", pady=(0, 5))
-        
-        options_radio_frame = ctk.CTkFrame(options_frame, fg_color="transparent")
-        options_radio_frame.pack(fill="x")
-        
-        existing_rb = ctk.CTkRadioButton(
-            options_radio_frame,
-            text="Seleccionar Material Existente",
-            variable=material_type_var,
-            value="existing",
-            command=update_fields
+        confirm = messagebox.askyesno(
+            "Confirmar eliminación", 
+            f"¿Está seguro de eliminar el material '{client_material.material.name}' de este cliente?"
         )
-        existing_rb.pack(side="left", padx=10)
         
-        custom_rb = ctk.CTkRadioButton(
-            options_radio_frame,
-            text="Definir Material Manualmente",
-            variable=material_type_var,
-            value="custom",
-            command=update_fields
-        )
-        custom_rb.pack(side="left", padx=10)
-        
-        # Frame para material existente
-        existing_frame = ctk.CTkFrame(form_frame, fg_color="transparent")
-        existing_frame.pack(fill="x", pady=10)
-        
-        ctk.CTkLabel(existing_frame, text="Material:").pack(anchor="w", pady=(0, 5))
-        
-        # Obtener materiales disponibles (priorizando plásticos)
-        available_materials = self.client_material_service.get_available_materials(client.id)
-        plastic_materials = [m for m in available_materials if m.material_type == MaterialType.PLASTIC]
-        other_materials = [m for m in available_materials if m.material_type != MaterialType.PLASTIC]
-        
-        material_options = []
-        if plastic_materials:
-            material_options.append(("-- Plásticos --", None))  # Encabezado
-            material_options.extend([(m.get_full_name(), m.id) for m in plastic_materials])
-        
-        if other_materials:
-            if material_options:  # Si ya hay plásticos, añadir separador
-                material_options.append(("------------------", None))
-            material_options.append(("-- Otros Materiales --", None))  # Encabezado
-            material_options.extend([(m.get_full_name(), m.id) for m in other_materials])
-        
-        if not material_options:
-            material_options = [("No hay materiales disponibles", None)]
-        
-        material_names = [m[0] for m in material_options]
-        
-        # OptionMenu para seleccionar material
-        material_menu = ctk.CTkOptionMenu(
-            existing_frame, 
-            values=material_names,
-            variable=existing_material_var,
-            dynamic_resizing=False,
-            width=300
-        )
-        material_menu.pack(fill="x", pady=(0, 15))
-        
-        if material_names:
-            # Seleccionar primer material válido (no encabezado)
-            for i, (name, id) in enumerate(material_options):
-                if id is not None:
-                    material_menu.set(name)
-                    break
-        
-        # Frame para material personalizado
-        custom_frame = ctk.CTkFrame(form_frame, fg_color="transparent")
-        
-        # Nombre del material personalizado
-        ctk.CTkLabel(custom_frame, text="Nombre del Material:").pack(anchor="w", pady=(0, 5))
-        
-        custom_name_entry = ctk.CTkEntry(custom_frame, textvariable=custom_material_var)
-        custom_name_entry.pack(fill="x", pady=(0, 10))
-        
-        # Checkbox para subtipo de plástico
-        plastic_checkbox = ctk.CTkCheckBox(
-            custom_frame,
-            text="Es un plástico",
-            variable=is_plastic_var,
-            command=update_fields
-        )
-        plastic_checkbox.pack(anchor="w", pady=(10, 5))
-        
-        # Subtipo de plástico (Caramelo, Chicle, Otro)
-        plastic_subtype_label = ctk.CTkLabel(custom_frame, text="Subtipo de Plástico")
-        
-        plastic_subtypes = {
-            PlasticSubtype.CANDY: "Caramelo",
-            PlasticSubtype.GUM: "Chicle",
-            PlasticSubtype.OTHER: "Otro"
-        }
-        
-        plastic_subtype_menu = ctk.CTkOptionMenu(
-            custom_frame,
-            values=list(plastic_subtypes.values()),
-            command=lambda choice: plastic_subtype_var.set(
-                next(key for key, value in plastic_subtypes.items() if value == choice)
-            )
-        )
-        plastic_subtype_menu.set(plastic_subtypes[PlasticSubtype.CANDY])
-        
-        # Subtipo personalizado para "Otro"
-        custom_plastic_label = ctk.CTkLabel(custom_frame, text="Especificar Subtipo")
-        
-        custom_plastic_entry = ctk.CTkEntry(custom_frame, textvariable=custom_subtype_var)
-        
-        # Estado del plástico (limpio/sucio)
-        plastic_state_label = ctk.CTkLabel(custom_frame, text="Estado del Plástico")
-        
-        plastic_state_frame = ctk.CTkFrame(custom_frame, fg_color="transparent")
-        
-        clean_rb = ctk.CTkRadioButton(
-            plastic_state_frame,
-            text="Limpio",
-            variable=plastic_state_var,
-            value="clean"
-        )
-        clean_rb.pack(side="left", padx=10)
-        
-        dirty_rb = ctk.CTkRadioButton(
-            plastic_state_frame,
-            text="Sucio",
-            variable=plastic_state_var,
-            value="dirty"
-        )
-        dirty_rb.pack(side="left", padx=10)
-        
-        # Sección de precios (común para ambos tipos)
-        price_frame = ctk.CTkFrame(form_frame, fg_color="transparent")
-        price_frame.pack(fill="x", pady=15)
-        
-        # Precio
-        ctk.CTkLabel(price_frame, text="Precio:").pack(anchor="w", pady=(0, 5))
-        
-        price_entry = ctk.CTkEntry(price_frame, textvariable=price_var)
-        price_entry.pack(fill="x", pady=(0, 15))
-        
-        # Incluye IVA
-        tax_switch = ctk.CTkSwitch(
-            price_frame, 
-            text="Incluye IVA",
-            variable=tax_var,
-            onvalue=True,
-            offvalue=False
-        )
-        tax_switch.pack(anchor="w", pady=(0, 15))
-        
-        # Notas
-        ctk.CTkLabel(price_frame, text="Notas:").pack(anchor="w", pady=(0, 5))
-        
-        notes_entry = ctk.CTkTextbox(price_frame, height=80)
-        notes_entry.pack(fill="x", pady=(0, 15))
-        
-        # Mensaje de error
-        error_label = ctk.CTkLabel(main_frame, text="", text_color="red")
-        error_label.pack(fill="x", pady=(5, 0))
-        
-        # Botones
-        btn_frame = ctk.CTkFrame(main_frame, fg_color="transparent")
-        btn_frame.pack(fill="x", pady=15)
-        
-        # Actualizar campos según valores iniciales
-        update_fields()
-        
-        def save_material():
-            try:
-                # Convertir precio a float
-                try:
-                    price = float(price_var.get().replace(',', '.'))
-                except ValueError:
-                    error_label.configure(text="El precio debe ser un número válido")
-                    return
-                
-                material_id = None
-                
-                # Determinar si estamos usando un material existente o creando uno nuevo
-                if material_type_var.get() == "existing":
-                    # Validar selección de material
-                    selected_name = existing_material_var.get()
-                    
-                    # Verificar si se ha seleccionado un encabezado
-                    if selected_name in ["-- Plásticos --", "-- Otros Materiales --", "------------------", "No hay materiales disponibles"]:
-                        error_label.configure(text="Debe seleccionar un material válido")
-                        return
-                        
-                    # Obtener el ID del material seleccionado
-                    material_id = next((id for name, id in material_options if name == selected_name), None)
-                    
-                    if not material_id:
-                        error_label.configure(text="El material seleccionado no es válido")
-                        return
-                else:  # custom
-                    # Validar campos del material personalizado
-                    if not custom_material_var.get().strip():
-                        error_label.configure(text="Debe especificar un nombre para el material")
-                        custom_name_entry.focus_set()
-                        return
-                    
-                    if is_plastic_var.get() and plastic_subtype_var.get() == PlasticSubtype.OTHER:
-                        if not custom_subtype_var.get().strip():
-                            error_label.configure(text="Debe especificar el subtipo de plástico personalizado")
-                            custom_plastic_entry.focus_set()
-                            return
-                    
-                    # Crear el nuevo material
-                    new_material = Material(
-                        name=custom_material_var.get().strip(),
-                        description="",
-                        material_type=MaterialType.PLASTIC if is_plastic_var.get() else MaterialType.CUSTOM,
-                        is_plastic_subtype=is_plastic_var.get(),
-                        plastic_subtype=plastic_subtype_var.get() if is_plastic_var.get() else "",
-                        plastic_state=plastic_state_var.get() if is_plastic_var.get() else "",
-                        custom_subtype=custom_subtype_var.get().strip() if is_plastic_var.get() and plastic_subtype_var.get() == PlasticSubtype.OTHER else custom_material_var.get().strip() if not is_plastic_var.get() else "",
-                        is_active=True
-                    )
-                    
-                    # Guardar el material en la base de datos
-                    if self.material_service.save_material(new_material):
-                        material_id = new_material.id
-                    else:
-                        error_label.configure(text="Error al crear el nuevo material")
-                        return
-                
-                # Crear relación cliente-material
-                client_material = ClientMaterial(
-                    client_id=client.id,
-                    material_id=material_id,
-                    price=price,
-                    includes_tax=tax_var.get(),
-                    notes=notes_entry.get("1.0", "end-1c").strip()
-                )
-                
-                # Guardar en la base de datos
-                if self.client_material_service.save_client_material(client_material):
-                    messagebox.showinfo("Éxito", "Material agregado correctamente")
-                    dialog.destroy()
-                    
-                    # Recargar la vista de materiales
-                    materials_frame = next(
-                        w for w in parent_dialog.winfo_children()
-                        if isinstance(w, ctk.CTkScrollableFrame)
-                    )
-                    materials_container = next(
-                        w for w in materials_frame.winfo_children()
-                        if isinstance(w, ctk.CTkFrame) and w.winfo_children() and not "transparent" in str(w.cget("fg_color"))
-                    )
-                    self._load_client_materials(client, materials_container)
-                else:
-                    error_label.configure(text="Error al guardar la relación")
-                    
-            except Exception as e:
-                error_label.configure(text=f"Error: {str(e)}")
-        
-        # Botón cancelar
-        ctk.CTkButton(
-            btn_frame,
-            text="Cancelar",
-            command=dialog.destroy,
-            fg_color="gray50",
-            width=100
-        ).pack(side="left", padx=20)
-        
-        # Botón guardar
-        ctk.CTkButton(
-            btn_frame,
-            text="Guardar",
-            command=save_material,
-            width=100
-        ).pack(side="right", padx=20)
-        
-        # Bloquear ventana padre
-        dialog.transient(parent_dialog)
-        dialog.grab_set()
-    
-    def _show_edit_price_dialog(self, parent_dialog, client, client_material, material):
-        """
-        Muestra diálogo para editar el precio de un material.
-        
-        Args:
-            parent_dialog: Diálogo padre
-            client (Client): Cliente propietario
-            client_material (ClientMaterial): Relación cliente-material a editar
-            material (Material): Material asociado
-        """
-        # Crear ventana de diálogo
-        dialog = ctk.CTkToplevel(parent_dialog)
-        dialog.title("Editar Precio")
-        dialog.geometry("500x400")
-        dialog.resizable(False, False)
-        
-        # Centrar ventana
-        dialog.update_idletasks()
-        x = (dialog.winfo_screenwidth() // 2) - (dialog.winfo_width() // 2)
-        y = (dialog.winfo_screenheight() // 2) - (dialog.winfo_height() // 2)
-        dialog.geometry(f'+{x}+{y}')
-        
-        # Contenedor principal con scroll
-        main_frame = ctk.CTkScrollableFrame(dialog)
-        main_frame.pack(fill="both", expand=True, padx=20, pady=20)
-        
-        # Título
-        ctk.CTkLabel(
-            main_frame,
-            text=f"Editar Precio - {material.get_full_name()}",
-            font=ctk.CTkFont(size=16, weight="bold")
-        ).pack(pady=(0, 20))
-        
-        # Form
-        form_frame = ctk.CTkFrame(main_frame, fg_color="transparent")
-        form_frame.pack(fill="x", pady=10)
-        
-        # Precio
-        ctk.CTkLabel(form_frame, text="Precio:").pack(anchor="w", pady=(0, 5))
-        
-        price_var = tk.StringVar(value=str(client_material.price))
-        price_entry = ctk.CTkEntry(form_frame, textvariable=price_var)
-        price_entry.pack(fill="x", pady=(0, 15))
-        
-        # Incluye IVA
-        tax_var = tk.BooleanVar(value=client_material.includes_tax)
-        tax_switch = ctk.CTkSwitch(
-            form_frame, 
-            text="Incluye IVA",
-            variable=tax_var,
-            onvalue=True,
-            offvalue=False
-        )
-        tax_switch.pack(anchor="w", pady=(0, 15))
-        
-        # Notas
-        ctk.CTkLabel(form_frame, text="Notas:").pack(anchor="w", pady=(0, 5))
-        
-        notes_entry = ctk.CTkTextbox(form_frame, height=80)
-        notes_entry.pack(fill="x", pady=(0, 15))
-        notes_entry.insert("1.0", client_material.notes)
-        
-        # Mensaje de error
-        error_label = ctk.CTkLabel(main_frame, text="", text_color="red")
-        error_label.pack(fill="x", pady=(5, 0))
-        
-        # Botones
-        btn_frame = ctk.CTkFrame(main_frame, fg_color="transparent")
-        btn_frame.pack(fill="x", pady=15)
-        
-        def save_price():
-            try:
-                # Convertir precio a float
-                try:
-                    price = float(price_var.get().replace(',', '.'))
-                except ValueError:
-                    error_label.configure(text="El precio debe ser un número válido")
-                    return
-                
-                # Actualizar objeto
-                client_material.price = price
-                client_material.includes_tax = tax_var.get()
-                client_material.notes = notes_entry.get("1.0", "end-1c").strip()
-                
-                # Guardar en la base de datos
-                if self.client_material_service.save_client_material(client_material):
-                    messagebox.showinfo("Éxito", "Precio actualizado correctamente")
-                    dialog.destroy()
-                    
-                    # Recargar la vista de materiales
-                    materials_frame = next(
-                        w for w in parent_dialog.winfo_children()
-                        if isinstance(w, ctk.CTkScrollableFrame)
-                    )
-                    materials_container = next(
-                        w for w in materials_frame.winfo_children()
-                        if isinstance(w, ctk.CTkFrame) and w.winfo_children() and not "transparent" in str(w.cget("fg_color"))
-                    )
-                    self._load_client_materials(client, materials_container)
-                else:
-                    error_label.configure(text="Error al actualizar el precio")
-                    
-            except Exception as e:
-                error_label.configure(text=f"Error: {str(e)}")
-        
-        # Botón cancelar
-        ctk.CTkButton(
-            btn_frame,
-            text="Cancelar",
-            command=dialog.destroy,
-            fg_color="gray50",
-            width=100
-        ).pack(side="left", padx=20)
-        
-        # Botón guardar
-        ctk.CTkButton(
-            btn_frame,
-            text="Guardar",
-            command=save_price,
-            width=100
-        ).pack(side="right", padx=20)
-        
-        # Bloquear ventana padre
-        dialog.transient(parent_dialog)
-        dialog.grab_set()
-    
-    def _confirm_delete_material(self, parent_dialog, client, client_material, material):
-        """
-        Confirma y elimina una relación cliente-material.
-        
-        Args:
-            parent_dialog: Diálogo padre
-            client (Client): Cliente propietario
-            client_material (ClientMaterial): Relación cliente-material a eliminar
-            material (Material): Material asociado
-        """
-        if messagebox.askyesno(
-            "Eliminar Material", 
-            f"¿Está seguro que desea eliminar el material '{material.get_full_name()}' de este cliente?\n\n"
-            "Esta acción no se puede deshacer."
-        ):
-            if self.client_material_service.delete_client_material(client_material.id):
+        if confirm:
+            success = self.material_service.remove_material_from_client(client_material.id)
+            
+            if success:
                 messagebox.showinfo("Éxito", "Material eliminado correctamente")
-                
-                # Recargar la vista de materiales
-                materials_frame = next(
-                    w for w in parent_dialog.winfo_children()
-                    if isinstance(w, ctk.CTkScrollableFrame)
-                )
-                materials_container = next(
-                    w for w in materials_frame.winfo_children()
-                    if isinstance(w, ctk.CTkFrame) and w.winfo_children() and not "transparent" in str(w.cget("fg_color"))
-                )
-                self._load_client_materials(client, materials_container)
+                # Actualizar lista de materiales
+                self._load_client_materials()
             else:
                 messagebox.showerror("Error", "No se pudo eliminar el material")
-    
-    def _confirm_delete(self, client):
-        """
-        Confirma y elimina un cliente.
-        
-        Args:
-            client (Client): Cliente a eliminar
-        """
-        if messagebox.askyesno(
-            "Eliminar Cliente", 
-            f"¿Está seguro que desea eliminar al cliente '{client.name}'?\n\n"
-            "Esta acción no se puede deshacer."
-        ):
-            if self.client_service.delete_client(client.id):
-                messagebox.showinfo("Éxito", "Cliente eliminado correctamente")
-                self._load_clients()  # Recargar datos
-            else:
-                messagebox.showerror("Error", "No se pudo eliminar el cliente")

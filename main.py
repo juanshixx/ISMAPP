@@ -21,7 +21,8 @@ try:
     from views.worker_view import WorkerView
     from views.user_admin_view import UserAdminView
     from views.dashboard_view import DashboardView
-    from views.client_view import ClientView  # Nueva importación para el módulo de clientes
+    from views.client_view import ClientView  # Vista para el módulo de clientes
+    from views.material_view import MaterialView  # Vista para el módulo de materiales
     from models.user import User
     # Importar la nueva clase de preferencias de usuario
     from user_preferences import UserPreferences
@@ -399,7 +400,7 @@ class ISMV3App(ctk.CTk):
             ctk.CTkLabel(scrollable, text=f"Error al cargar: {str(e)}", text_color="red").pack(pady=10)
             self.frames["workers"] = container
         
-        # MODIFICADO: Frame Clientes - Usando ClientView
+        # Frame Clientes - Usando ClientView
         try:
             # Intentar usar ClientView
             clients_container = ctk.CTkFrame(self.main_view)
@@ -417,6 +418,24 @@ class ISMV3App(ctk.CTk):
             ctk.CTkLabel(scrollable, text=f"Error al cargar módulo: {str(e)}", text_color="red").pack(pady=10)
             self.frames["clients"] = container
         
+        # NUEVO: Frame Materiales - Usando MaterialView
+        try:
+            # Intentar usar MaterialView
+            materials_container = ctk.CTkFrame(self.main_view)
+            materials_container.grid_rowconfigure(0, weight=1)
+            materials_container.grid_columnconfigure(0, weight=1)
+            
+            materials_content = MaterialView(materials_container)
+            materials_content.grid(row=0, column=0, sticky="nsew", padx=5, pady=5)
+            
+            self.frames["materials"] = materials_container
+        except Exception as e:
+            print(f"Error al cargar MaterialView: {e}")
+            # Fallback si hay error
+            container, scrollable = create_scrollable_frame("Módulo de Materiales")
+            ctk.CTkLabel(scrollable, text=f"Error al cargar módulo: {str(e)}", text_color="red").pack(pady=10)
+            self.frames["materials"] = container
+        
         # Frame Pesajes (con scroll)
         container, scrollable = create_scrollable_frame("Módulo de Pesajes")
         # Aquí añadir el contenido específico del módulo de pesajes
@@ -426,11 +445,6 @@ class ISMV3App(ctk.CTk):
         container, scrollable = create_scrollable_frame("Módulo de Transacciones")
         # Aquí añadir el contenido específico del módulo de transacciones
         self.frames["transactions"] = container
-        
-        # Frame Materiales (con scroll)
-        container, scrollable = create_scrollable_frame("Módulo de Materiales")
-        # Aquí añadir el contenido específico del módulo de materiales
-        self.frames["materials"] = container
         
         # Solo para administradores
         if self.current_user and self.current_user.role == "admin":
