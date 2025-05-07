@@ -63,12 +63,53 @@ class ISMV3App(ctk.CTk):
         # Inicializar gestor de datos (singleton)
         try:
             self.data_manager = DataManager()
+            
+            # AGREGADO: Inicializar servicios
+            self._initialize_services()
         except Exception as e:
             print(f"Error al inicializar DataManager: {e}")
         
         # Mostrar login antes de la interfaz principal
         self.withdraw()  # Ocultar ventana principal primero
         self._show_login()
+    
+    # AGREGADO: Método para inicializar servicios
+    def _initialize_services(self):
+        """Inicializa los servicios necesarios para la aplicación."""
+        try:
+            # Crear diccionario para almacenar los servicios
+            self.services = {}
+            
+            # Inicializar servicios de forma robusta, manejando posibles errores
+            try:
+                from core.services.client_service import ClientService
+                self.services["ClientService"] = ClientService(self.data_manager)
+                print("Servicio de clientes inicializado correctamente")
+            except ImportError as e:
+                print(f"Error al importar ClientService: {e}")
+            
+            try:
+                from core.services.material_service import MaterialService
+                self.services["MaterialService"] = MaterialService(self.data_manager)
+                print("Servicio de materiales inicializado correctamente")
+            except ImportError as e:
+                print(f"Error al importar MaterialService: {e}")
+            
+            # Intentar cargar UserService pero continuar sin él si no está disponible
+            try:
+                from core.services.user_service import UserService
+                self.services["UserService"] = UserService(self.data_manager)
+                print("Servicio de usuarios inicializado correctamente")
+            except ImportError as e:
+                print(f"Error al importar UserService: {e}")
+            
+            print(f"Servicios disponibles: {len(self.services)}")
+            for service_name in self.services:
+                print(f"  - {service_name}")
+        
+        except Exception as e:
+            print(f"Error al inicializar servicios: {e}")
+            messagebox.showerror("Error", f"No se pudieron inicializar todos los servicios: {e}")
     
     def _load_custom_theme(self):
         """Carga el tema personalizado si existe."""
@@ -400,7 +441,7 @@ class ISMV3App(ctk.CTk):
             ctk.CTkLabel(scrollable, text=f"Error al cargar: {str(e)}", text_color="red").pack(pady=10)
             self.frames["workers"] = container
         
-        # Frame Clientes - Usando ClientView
+        # MODIFICADO: Frame Clientes - Usando ClientView en lugar de placeholder
         try:
             # Intentar usar ClientView
             clients_container = ctk.CTkFrame(self.main_view)
@@ -411,6 +452,7 @@ class ISMV3App(ctk.CTk):
             clients_content.grid(row=0, column=0, sticky="nsew", padx=5, pady=5)
             
             self.frames["clients"] = clients_container
+            print("Vista de Clientes cargada correctamente")
         except Exception as e:
             print(f"Error al cargar ClientView: {e}")
             # Fallback si hay error
@@ -418,7 +460,7 @@ class ISMV3App(ctk.CTk):
             ctk.CTkLabel(scrollable, text=f"Error al cargar módulo: {str(e)}", text_color="red").pack(pady=10)
             self.frames["clients"] = container
         
-        # NUEVO: Frame Materiales - Usando MaterialView
+        # MODIFICADO: Frame Materiales - Usando MaterialView en lugar de placeholder
         try:
             # Intentar usar MaterialView
             materials_container = ctk.CTkFrame(self.main_view)
@@ -429,6 +471,7 @@ class ISMV3App(ctk.CTk):
             materials_content.grid(row=0, column=0, sticky="nsew", padx=5, pady=5)
             
             self.frames["materials"] = materials_container
+            print("Vista de Materiales cargada correctamente")
         except Exception as e:
             print(f"Error al cargar MaterialView: {e}")
             # Fallback si hay error
