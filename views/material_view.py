@@ -328,45 +328,6 @@ class MaterialView(ctk.CTkFrame):
         custom_subtype_var = tk.StringVar(value=self.current_material.custom_subtype)
         active_var = tk.BooleanVar(value=self.current_material.is_active)
         
-        # Función para actualizar visibilidad de campos
-        def update_fields(*args):
-            material_type = material_type_var.get()
-            
-            # Mostrar/ocultar campos según el tipo de material
-            if material_type == MaterialType.PLASTIC:
-                plastic_fields_frame.grid()
-                custom_subtype_label.grid_remove()
-                custom_subtype_entry.grid_remove()
-                
-                # Actualizar campos de subtipo plástico
-                is_plastic = is_plastic_var.get()
-                subtype = plastic_subtype_var.get()
-                
-                if is_plastic:
-                    plastic_subtype_label.grid()
-                    plastic_subtype_menu.grid()
-                    plastic_state_label.grid()
-                    plastic_state_frame.grid()
-                    
-                    # Mostrar/ocultar campo de subtipo personalizado
-                    if subtype == PlasticSubtype.OTHER:
-                        custom_plastic_label.grid()
-                        custom_plastic_entry.grid()
-                    else:
-                        custom_plastic_label.grid_remove()
-                        custom_plastic_entry.grid_remove()
-                else:
-                    plastic_subtype_label.grid_remove()
-                    plastic_subtype_menu.grid_remove()
-                    plastic_state_label.grid_remove()
-                    plastic_state_frame.grid_remove()
-                    custom_plastic_label.grid_remove()
-                    custom_plastic_entry.grid_remove()
-            else:  # MaterialType.CUSTOM
-                plastic_fields_frame.grid_remove()
-                custom_subtype_label.grid()
-                custom_subtype_entry.grid()
-        
         # Nombre (requerido)
         ctk.CTkLabel(form_frame, text="Nombre*").grid(row=0, column=0, sticky="w", padx=5, pady=(10, 0))
         name_entry = ctk.CTkEntry(form_frame, textvariable=name_var)
@@ -378,6 +339,110 @@ class MaterialView(ctk.CTkFrame):
         description_entry = ctk.CTkTextbox(form_frame, height=60)
         description_entry.grid(row=3, column=0, sticky="ew", padx=5, pady=(0, 10))
         description_entry.insert("1.0", self.current_material.description)
+        
+        # Frame para campos específicos de plásticos
+        plastic_fields_frame = ctk.CTkFrame(form_frame, fg_color="transparent")
+        plastic_fields_frame.grid_columnconfigure(0, weight=1)  # Permitir expansión de widgets hijos
+        
+        # Frame para campos de materiales personalizados
+        custom_subtype_label = ctk.CTkLabel(form_frame, text="Nombre del Material")
+        custom_subtype_entry = ctk.CTkEntry(form_frame, textvariable=custom_subtype_var)
+        
+        # Subtipo de plástico (Caramelo, Chicle, Otro)
+        plastic_subtype_label = ctk.CTkLabel(plastic_fields_frame, text="Subtipo de Plástico")
+        
+        plastic_subtypes = {
+            PlasticSubtype.CANDY: "Caramelo",
+            PlasticSubtype.GUM: "Chicle",
+            PlasticSubtype.OTHER: "Otro"
+        }
+        
+        plastic_subtype_menu = ctk.CTkOptionMenu(
+            plastic_fields_frame,
+            values=list(plastic_subtypes.values())
+        )
+        
+        # Subtipo personalizado para "Otro"
+        custom_plastic_label = ctk.CTkLabel(plastic_fields_frame, text="Especificar Subtipo")
+        custom_plastic_entry = ctk.CTkEntry(plastic_fields_frame, textvariable=custom_subtype_var)
+        
+        # Estado del plástico (limpio/sucio)
+        plastic_state_label = ctk.CTkLabel(plastic_fields_frame, text="Estado del Plástico")
+        plastic_state_frame = ctk.CTkFrame(plastic_fields_frame, fg_color="transparent")
+        plastic_state_frame.grid_columnconfigure((0, 1), weight=1)  # Distribuir espacio equitativamente
+        
+        clean_rb = ctk.CTkRadioButton(
+            plastic_state_frame,
+            text="Limpio",
+            variable=plastic_state_var,
+            value="clean"
+        )
+        clean_rb.grid(row=0, column=0, padx=10, sticky="w")
+        
+        dirty_rb = ctk.CTkRadioButton(
+            plastic_state_frame,
+            text="Sucio",
+            variable=plastic_state_var,
+            value="dirty"
+        )
+        dirty_rb.grid(row=0, column=1, padx=10, sticky="w")
+        
+        # Checkbox para subtipo de plástico (usando grid)
+        plastic_checkbox = ctk.CTkCheckBox(
+            plastic_fields_frame,
+            text="Es un subtipo específico de plástico",
+            variable=is_plastic_var
+        )
+        plastic_checkbox.grid(row=0, column=0, sticky="w", pady=(0, 10))
+        
+        # Función para actualizar visibilidad de campos - DEFINIDA ANTES de ser usada
+        def update_fields(*args):
+            # Ocultar todos los widgets específicos primero
+            plastic_subtype_label.grid_remove()
+            plastic_subtype_menu.grid_remove()
+            plastic_state_label.grid_remove()
+            plastic_state_frame.grid_remove()
+            custom_plastic_label.grid_remove()
+            custom_plastic_entry.grid_remove()
+            custom_subtype_label.grid_remove()
+            custom_subtype_entry.grid_remove()
+            
+            material_type = material_type_var.get()
+            
+            # Mostrar/ocultar campos según el tipo de material
+            if material_type == MaterialType.PLASTIC:
+                plastic_fields_frame.grid(row=8, column=0, sticky="ew", padx=5, pady=(10, 0))
+                
+                # Actualizar campos de subtipo plástico
+                is_plastic = is_plastic_var.get()
+                subtype = plastic_subtype_var.get()
+                
+                if is_plastic:
+                    plastic_subtype_label.grid(row=1, column=0, sticky="w", pady=(10, 0))
+                    plastic_subtype_menu.grid(row=2, column=0, sticky="ew", pady=(0, 10))
+                    plastic_state_label.grid(row=3, column=0, sticky="w", pady=(10, 0))
+                    plastic_state_frame.grid(row=4, column=0, sticky="ew", pady=(0, 10))
+                    
+                    # Mostrar/ocultar campo de subtipo personalizado
+                    if subtype == PlasticSubtype.OTHER:
+                        custom_plastic_label.grid(row=5, column=0, sticky="w", pady=(10, 0))
+                        custom_plastic_entry.grid(row=6, column=0, sticky="ew", pady=(0, 10))
+            else:  # MaterialType.CUSTOM
+                plastic_fields_frame.grid_remove()
+                custom_subtype_label.grid(row=6, column=0, sticky="w", padx=5, pady=(10, 0))
+                custom_subtype_entry.grid(row=7, column=0, sticky="ew", padx=5, pady=(0, 10))
+        
+        # IMPORTANTE: Ahora configuro los callbacks DESPUÉS de definir update_fields
+        plastic_checkbox.configure(command=update_fields)
+        plastic_subtype_menu.configure(
+            variable=plastic_subtype_var,
+            command=lambda choice: (
+                plastic_subtype_var.set(
+                    next(key for key, value in plastic_subtypes.items() if value == choice)
+                ),
+                update_fields()  # Actualizar campos al cambiar subtipo
+            )
+        )
         
         # Tipo de material (requerido)
         ctk.CTkLabel(form_frame, text="Tipo de Material*").grid(row=4, column=0, sticky="w", padx=5, pady=(10, 0))
@@ -403,76 +468,6 @@ class MaterialView(ctk.CTkFrame):
             command=update_fields
         )
         custom_rb.pack(side="left", padx=10)
-        
-        # Frame para campos de materiales personalizados
-        custom_subtype_label = ctk.CTkLabel(form_frame, text="Nombre del Material")
-        custom_subtype_label.grid(row=6, column=0, sticky="w", padx=5, pady=(10, 0))
-        
-        custom_subtype_entry = ctk.CTkEntry(form_frame, textvariable=custom_subtype_var)
-        custom_subtype_entry.grid(row=7, column=0, sticky="ew", padx=5, pady=(0, 10))
-        
-        # Frame para campos específicos de plásticos
-        plastic_fields_frame = ctk.CTkFrame(form_frame, fg_color="transparent")
-        plastic_fields_frame.grid(row=8, column=0, sticky="ew", padx=5, pady=(10, 0))
-        
-        # Checkbox para subtipo de plástico
-        plastic_checkbox = ctk.CTkCheckBox(
-            plastic_fields_frame,
-            text="Es un subtipo específico de plástico",
-            variable=is_plastic_var,
-            command=update_fields
-        )
-        plastic_checkbox.pack(anchor="w", pady=(0, 10))
-        
-        # Subtipo de plástico (Caramelo, Chicle, Otro)
-        plastic_subtype_label = ctk.CTkLabel(plastic_fields_frame, text="Subtipo de Plástico")
-        plastic_subtype_label.pack(anchor="w", pady=(10, 0))
-        
-        plastic_subtypes = {
-            PlasticSubtype.CANDY: "Caramelo",
-            PlasticSubtype.GUM: "Chicle",
-            PlasticSubtype.OTHER: "Otro"
-        }
-        
-        plastic_subtype_menu = ctk.CTkOptionMenu(
-            plastic_fields_frame,
-            values=list(plastic_subtypes.values()),
-            variable=plastic_subtype_var,
-            command=lambda choice: plastic_subtype_var.set(
-                next(key for key, value in plastic_subtypes.items() if value == choice)
-            )
-        )
-        plastic_subtype_menu.pack(fill="x", pady=(0, 10))
-        
-        # Subtipo personalizado para "Otro"
-        custom_plastic_label = ctk.CTkLabel(plastic_fields_frame, text="Especificar Subtipo")
-        custom_plastic_label.pack(anchor="w", pady=(10, 0))
-        
-        custom_plastic_entry = ctk.CTkEntry(plastic_fields_frame, textvariable=custom_subtype_var)
-        custom_plastic_entry.pack(fill="x", pady=(0, 10))
-        
-        # Estado del plástico (limpio/sucio)
-        plastic_state_label = ctk.CTkLabel(plastic_fields_frame, text="Estado del Plástico")
-        plastic_state_label.pack(anchor="w", pady=(10, 0))
-        
-        plastic_state_frame = ctk.CTkFrame(plastic_fields_frame, fg_color="transparent")
-        plastic_state_frame.pack(fill="x", pady=(0, 10))
-        
-        clean_rb = ctk.CTkRadioButton(
-            plastic_state_frame,
-            text="Limpio",
-            variable=plastic_state_var,
-            value="clean"
-        )
-        clean_rb.pack(side="left", padx=10)
-        
-        dirty_rb = ctk.CTkRadioButton(
-            plastic_state_frame,
-            text="Sucio",
-            variable=plastic_state_var,
-            value="dirty"
-        )
-        dirty_rb.pack(side="left", padx=10)
         
         # Estado (activo/inactivo)
         active_frame = ctk.CTkFrame(form_frame, fg_color="transparent")

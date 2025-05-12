@@ -166,6 +166,7 @@ class ClientView(ctk.CTkFrame):
             "account_type": tk.StringVar(),
             "account_number": tk.StringVar(),
             "account_holder": tk.StringVar(),
+            "account_holder_rut": tk.StringVar(),  # NUEVO: RUT del titular de la cuenta
         }
         
         # Nombre del cliente
@@ -318,6 +319,10 @@ class ClientView(ctk.CTkFrame):
         ctk.CTkLabel(form_frame, text="Titular de la cuenta:").grid(row=6, column=0, sticky="w", pady=(10, 0))
         ctk.CTkEntry(form_frame, textvariable=self.form_vars["account_holder"]).grid(row=7, column=0, sticky="ew", pady=(0, 10))
         
+        # NUEVO: RUT del titular de la cuenta
+        ctk.CTkLabel(form_frame, text="RUT del titular:").grid(row=8, column=0, sticky="w", pady=(10, 0))
+        ctk.CTkEntry(form_frame, textvariable=self.form_vars["account_holder_rut"]).grid(row=9, column=0, sticky="ew", pady=(0, 10))
+        
         # Expandir columnas para llenar el espacio horizontal
         form_frame.columnconfigure(0, weight=1)
         
@@ -332,6 +337,44 @@ class ClientView(ctk.CTkFrame):
             wraplength=450,
             text_color=("gray40", "gray80")
         ).pack(padx=10, pady=10)
+        
+        # NUEVO: Botón para guardar datos bancarios
+        btn_frame = ctk.CTkFrame(banking_scroll, fg_color="transparent")
+        btn_frame.pack(fill="x", pady=20)
+        
+        self.save_banking_btn = ctk.CTkButton(
+            btn_frame,
+            text="Guardar Datos Bancarios",
+            command=self._save_banking_data,
+            state="disabled",
+            font=ctk.CTkFont(weight="bold")
+        )
+        self.save_banking_btn.pack(side="right", padx=10)
+    
+    # NUEVO: Método para guardar los datos bancarios
+    def _save_banking_data(self):
+        """Guarda los datos bancarios del cliente actual."""
+        if not self.current_client:
+            messagebox.showerror("Error", "No hay cliente seleccionado")
+            return
+            
+        # Actualizar propiedades bancarias
+        self.current_client.bank_name = self.form_vars["bank_name"].get().strip()
+        self.current_client.account_type = self.form_vars["account_type"].get().strip()
+        self.current_client.account_number = self.form_vars["account_number"].get().strip()
+        self.current_client.account_holder = self.form_vars["account_holder"].get().strip()
+        self.current_client.account_holder_rut = self.form_vars["account_holder_rut"].get().strip()
+        
+        # Guardar cliente con datos bancarios
+        try:
+            success = self.client_service.save_client(self.current_client)
+            
+            if success:
+                messagebox.showinfo("Éxito", "Datos bancarios guardados correctamente")
+            else:
+                messagebox.showerror("Error", "No se pudieron guardar los datos bancarios")
+        except Exception as e:
+            messagebox.showerror("Error", f"Error al guardar los datos: {str(e)}")
     
     def _setup_materials_tab(self, parent):
         """Configura la pestaña de materiales del cliente."""
@@ -493,10 +536,15 @@ class ClientView(ctk.CTkFrame):
         self.form_vars["account_type"].set(client.account_type if hasattr(client, 'account_type') else "")
         self.form_vars["account_number"].set(client.account_number if hasattr(client, 'account_number') else "")
         self.form_vars["account_holder"].set(client.account_holder if hasattr(client, 'account_holder') else "")
+        self.form_vars["account_holder_rut"].set(client.account_holder_rut if hasattr(client, 'account_holder_rut') else "")
         
         # Activar botones de guardar y eliminar
         self.save_btn.configure(state="normal")
         self.delete_btn.configure(state="normal")
+        
+        # NUEVO: Activar botón de guardar datos bancarios
+        if hasattr(self, 'save_banking_btn'):
+            self.save_banking_btn.configure(state="normal")
         
         # Activar botón de añadir material
         self.add_material_btn.configure(state="normal")
@@ -530,11 +578,11 @@ class ClientView(ctk.CTkFrame):
             no_materials.pack(pady=20)
             return
             
-        # MEJORADO: Mostrar los materiales en la lista con más detalles
+        # Mostrar los materiales en la lista
         for i, client_material in enumerate(self.client_materials):
             material = client_material.material
             
-            # Crear frame para el material con borde
+            # Crear frame para el material
             material_frame = ctk.CTkFrame(self.materials_list, border_width=1, border_color=("gray70", "gray30"))
             material_frame.pack(fill="x", pady=5, padx=5)
             
@@ -734,7 +782,7 @@ class ClientView(ctk.CTkFrame):
                 fg_color="#E76F51"
             ).pack(side="left", padx=5)
     
-    # NUEVO: Método para mostrar detalles completos del material
+    # Método para mostrar detalles completos del material
     def _show_material_details(self, client_material):
         """
         Muestra una ventana con todos los detalles del material.
@@ -1006,6 +1054,10 @@ class ClientView(ctk.CTkFrame):
         self.save_btn.configure(state="normal")
         self.delete_btn.configure(state="disabled")
         
+        # NUEVO: Desactivar botón de guardar datos bancarios
+        if hasattr(self, 'save_banking_btn'):
+            self.save_banking_btn.configure(state="disabled")
+        
         # Desactivar botón de añadir material
         self.add_material_btn.configure(state="disabled")
         
@@ -1054,11 +1106,12 @@ class ClientView(ctk.CTkFrame):
         client.client_type = self.form_vars["client_type"].get()
         client.is_active = True
         
-        # Guardar datos bancarios
+        # ACTUALIZADO: Guardar datos bancarios
         client.bank_name = self.form_vars["bank_name"].get().strip()
         client.account_type = self.form_vars["account_type"].get().strip()
         client.account_number = self.form_vars["account_number"].get().strip()
         client.account_holder = self.form_vars["account_holder"].get().strip()
+        client.account_holder_rut = self.form_vars["account_holder_rut"].get().strip()  # NUEVO
         
         # Guardar en base de datos
         success = self.client_service.save_client(client)
@@ -1075,6 +1128,10 @@ class ClientView(ctk.CTkFrame):
             
             # Habilitar botón de añadir material si es un cliente existente
             self.add_material_btn.configure(state="normal")
+            
+            # NUEVO: Habilitar botón de guardar datos bancarios
+            if hasattr(self, 'save_banking_btn'):
+                self.save_banking_btn.configure(state="normal")
         else:
             messagebox.showerror("Error", "Error al guardar el cliente")
     
@@ -1120,7 +1177,7 @@ class ClientView(ctk.CTkFrame):
         # Crear ventana de diálogo
         dialog = ctk.CTkToplevel(self)
         dialog.title(f"Añadir Material a {self.current_client.name}")
-        dialog.geometry("600x600")
+        dialog.geometry("500x500")
         
         # Frame contenedor principal con scroll
         main_frame = ctk.CTkScrollableFrame(dialog)
@@ -1139,224 +1196,83 @@ class ClientView(ctk.CTkFrame):
         tax_var = tk.BooleanVar(value=False)
         notes_var = tk.StringVar()
         
-        # MEJORADO: Crear diccionario para mapear nombres a objetos material con detalles
-        material_map = {}
-        material_options = []
+        # Material (desplegable)
+        ctk.CTkLabel(main_frame, text="Material:").pack(anchor="w", pady=(10, 0))
         
+        # Crear diccionario para mapear nombres a objetos material
+        # Incluir estado del material en el texto mostrado
+        material_map = {}
         for m in available_materials:
-            # Crear texto para mostrar en el combo
             display_text = f"{m.name} ({m.material_type}"
             if hasattr(m, 'is_clean'):
                 state = "Limpio" if m.is_clean else "Sucio"
                 display_text += f" - {state}"
             display_text += ")"
-            
-            # Guardar mapping
             material_map[display_text] = m
-            material_options.append(display_text)
         
-        # Marco de selección de material
-        selection_frame = ctk.CTkFrame(main_frame, corner_radius=8)
-        selection_frame.pack(fill="x", pady=10)
+        material_options = list(material_map.keys())
         
-        ctk.CTkLabel(
-            selection_frame,
-            text="Material:",
-            font=ctk.CTkFont(size=14, weight="bold")
-        ).pack(anchor="w", padx=15, pady=(15, 5))
-        
-        # Combobox para seleccionar material
+        # Verificar si hay opciones antes de crear el ComboBox
         if material_options:
             material_dropdown = ctk.CTkComboBox(
-                selection_frame,
+                main_frame,
                 values=material_options,
                 variable=material_var,
-                width=500,
+                width=300,
                 state="readonly"
             )
-            material_dropdown.pack(padx=15, pady=(0, 15), fill="x")
+            material_dropdown.pack(fill="x", pady=(0, 10))
             
             # Seleccionar el primer material por defecto
             material_var.set(material_options[0])
         else:
+            # En caso de que la lista esté vacía por alguna razón (no debería pasar, pero por seguridad)
             ctk.CTkLabel(
-                selection_frame, 
+                main_frame, 
                 text="No hay materiales disponibles", 
                 text_color="red"
             ).pack(pady=10)
             
-            # Botón para cerrar
+            # Añadir un botón para cerrar el diálogo
             ctk.CTkButton(
-                selection_frame,
+                main_frame,
                 text="Cerrar",
                 command=dialog.destroy
             ).pack(pady=20)
             return
         
-        # NUEVO: Frame para mostrar los detalles del material seleccionado
-        self.preview_frame = ctk.CTkFrame(main_frame)
-        self.preview_frame.pack(fill="x", pady=10)
+        # Precio
+        ctk.CTkLabel(main_frame, text="Precio:").pack(anchor="w", pady=(10, 0))
         
-        # Función para actualizar los detalles del material seleccionado
-        def update_material_preview(*args):
-            # Limpiar frame de vista previa
-            for widget in self.preview_frame.winfo_children():
-                widget.destroy()
-                
-            selected_material = material_map.get(material_var.get())
-            
-            if not selected_material:
-                return
-                
-            # Título de sección
-            ctk.CTkLabel(
-                self.preview_frame,
-                text="Detalles del Material",
-                font=ctk.CTkFont(size=16, weight="bold")
-            ).pack(anchor="w", padx=15, pady=(15, 10))
-            
-            # Tabla de propiedades
-            details_table = ctk.CTkFrame(self.preview_frame, fg_color="transparent")
-            details_table.pack(fill="x", padx=15, pady=(0, 15))
-            
-            # Propiedades básicas
-            row = 0
-            
-            # Tipo y estado
-            type_text = selected_material.material_type
-            if hasattr(selected_material, 'is_clean'):
-                state = "Limpio" if selected_material.is_clean else "Sucio"
-                type_text += f" - {state}"
-                
-            # Mostrar propiedades en filas
-            properties = [
-                ("Tipo", type_text),
-            ]
-            
-            # Añadir categoría si existe
-            if hasattr(selected_material, 'category') and selected_material.category:
-                properties.append(("Categoría", selected_material.category))
-            
-            # Añadir código si existe
-            if hasattr(selected_material, 'code') and selected_material.code:
-                properties.append(("Código", selected_material.code))
-                
-            # Mostrar descripción si existe
-            if hasattr(selected_material, 'description') and selected_material.description:
-                properties.append(("Descripción", selected_material.description))
-            
-            # Crear filas de propiedades
-            for i, (prop_name, prop_value) in enumerate(properties):
-                # Alternar colores
-                bg_color = "transparent" if i % 2 == 0 else ("gray95", "gray25")
-                
-                prop_row = ctk.CTkFrame(details_table, fg_color=bg_color)
-                prop_row.pack(fill="x", pady=1)
-                prop_row.columnconfigure(1, weight=1)
-                
-                # Nombre de la propiedad
-                ctk.CTkLabel(
-                    prop_row,
-                    text=f"{prop_name}:",
-                    font=ctk.CTkFont(size=13, weight="bold"),
-                    width=100,
-                    anchor="w"
-                ).grid(row=0, column=0, padx=10, pady=5, sticky="w")
-                
-                # Valor de la propiedad
-                ctk.CTkLabel(
-                    prop_row,
-                    text=str(prop_value),
-                    font=ctk.CTkFont(size=13),
-                    anchor="w",
-                    wraplength=400,
-                    justify="left"
-                ).grid(row=0, column=1, padx=10, pady=5, sticky="w")
+        price_frame = ctk.CTkFrame(main_frame, fg_color="transparent")
+        price_frame.pack(fill="x", pady=(0, 10))
         
-        # Vincular cambio de selección con la actualización de vista previa
-        material_var.trace_add("write", update_material_preview)
-        # Actualizar vista previa inicial
-        update_material_preview()
+        # Mostrar símbolo CLP en el input de precio
+        price_entry = ctk.CTkEntry(price_frame, textvariable=price_var)
+        price_entry.pack(side="left", fill="x", expand=True)
         
-        # Frame para configuración de precio
-        price_config_frame = ctk.CTkFrame(main_frame, corner_radius=8)
-        price_config_frame.pack(fill="x", pady=10)
-        
-        ctk.CTkLabel(
-            price_config_frame,
-            text="Configuración de Precio",
-            font=ctk.CTkFont(size=16, weight="bold")
-        ).pack(anchor="w", padx=15, pady=(15, 10))
-        
-        # Precio con formato CLP
-        price_frame = ctk.CTkFrame(price_config_frame, fg_color="transparent")
-        price_frame.pack(fill="x", padx=15, pady=(0, 10))
-        
-        ctk.CTkLabel(
-            price_frame,
-            text="Precio por kilogramo:",
-            font=ctk.CTkFont(size=14),
-            anchor="w",
-            width=150
-        ).pack(side="left")
-        
-        # Campo de precio con símbolo CLP
-        price_entry_frame = ctk.CTkFrame(price_frame, fg_color="transparent")
-        price_entry_frame.pack(side="left", fill="x", expand=True)
-        
-        ctk.CTkLabel(
-            price_entry_frame,
-            text="$",
-            font=ctk.CTkFont(size=14, weight="bold")
-        ).pack(side="left", padx=(0, 5))
-        
-        price_entry = ctk.CTkEntry(price_entry_frame, textvariable=price_var, width=120)
-        price_entry.pack(side="left")
-        
-        ctk.CTkLabel(
-            price_entry_frame,
-            text="CLP / kg",
-            font=ctk.CTkFont(size=14)
-        ).pack(side="left", padx=5)
+        ctk.CTkLabel(price_frame, text="$ CLP / kg").pack(side="right", padx=5)
         
         # Incluye impuesto
-        tax_frame = ctk.CTkFrame(price_config_frame, fg_color="transparent")
-        tax_frame.pack(fill="x", padx=15, pady=(0, 15))
-        
         tax_check = ctk.CTkCheckBox(
-            tax_frame,
+            main_frame,
             text="El precio incluye impuestos",
             variable=tax_var,
             onvalue=True,
-            offvalue=False,
-            font=ctk.CTkFont(size=14)
+            offvalue=False
         )
-        tax_check.pack(anchor="w")
+        tax_check.pack(anchor="w", pady=10)
         
-        # Notas específicas para este cliente
-        notes_frame = ctk.CTkFrame(main_frame, corner_radius=8)
-        notes_frame.pack(fill="x", pady=10)
-        
-        ctk.CTkLabel(
-            notes_frame,
-            text="Notas",
-            font=ctk.CTkFont(size=16, weight="bold")
-        ).pack(anchor="w", padx=15, pady=(15, 5))
-        
-        ctk.CTkLabel(
-            notes_frame,
-            text="Observaciones específicas sobre este material para este cliente:",
-            font=ctk.CTkFont(size=12)
-        ).pack(anchor="w", padx=15, pady=(0, 5))
-        
-        notes_entry = ctk.CTkEntry(notes_frame, textvariable=notes_var, height=60)
-        notes_entry.pack(fill="x", padx=15, pady=(0, 15))
+        # Notas
+        ctk.CTkLabel(main_frame, text="Notas:").pack(anchor="w", pady=(10, 0))
+        notes_entry = ctk.CTkEntry(main_frame, textvariable=notes_var)
+        notes_entry.pack(fill="x", pady=(0, 20))
         
         # Mensaje de error
         error_label = ctk.CTkLabel(main_frame, text="", text_color="red")
         error_label.pack(fill="x", pady=(10, 0))
         
-        # Botones de acción
+        # Botones
         btn_frame = ctk.CTkFrame(main_frame, fg_color="transparent")
         btn_frame.pack(fill="x", pady=20)
         
@@ -1389,7 +1305,7 @@ class ClientView(ctk.CTkFrame):
             )
             
             if success:
-                messagebox.showinfo("Éxito", f"Material '{selected_material.name}' añadido correctamente")
+                messagebox.showinfo("Éxito", f"Material '{selected_material.name}' añadido")
                 dialog.destroy()
                 # Actualizar la lista de materiales del cliente
                 self._load_client_materials()
@@ -1402,18 +1318,15 @@ class ClientView(ctk.CTkFrame):
             text="Cancelar",
             command=dialog.destroy,
             fg_color="gray50",
-            width=100,
-            height=32
+            width=100
         ).pack(side="left", padx=20)
         
         # Botón guardar
         ctk.CTkButton(
             btn_frame,
-            text="Añadir Material",
+            text="Añadir",
             command=on_add_material,
-            width=120,
-            height=32,
-            font=ctk.CTkFont(weight="bold")
+            width=100
         ).pack(side="right", padx=20)
         
         # Centrar la ventana

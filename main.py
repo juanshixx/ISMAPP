@@ -102,6 +102,14 @@ class ISMV3App(ctk.CTk):
                 print("Servicio de usuarios inicializado correctamente")
             except ImportError as e:
                 print(f"Error al importar UserService: {e}")
+                
+            # CORREGIDO: Pasar el data_manager completo en lugar de session_factory
+            try:
+                from services.worker_service import WorkerService
+                self.services["WorkerService"] = WorkerService(self.data_manager)
+                print("Servicio de trabajadores inicializado correctamente")
+            except ImportError as e:
+                print(f"Error al importar WorkerService: {e}")
             
             print(f"Servicios disponibles: {len(self.services)}")
             for service_name in self.services:

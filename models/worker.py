@@ -1,64 +1,60 @@
 """
-Modelo de trabajador para ISMV3.
+Modelo para representar a los trabajadores en ISMAPP.
 """
-from dataclasses import dataclass, field, asdict
-from typing import Dict, Any, Optional, List
-from datetime import date
+from sqlalchemy import Column, Integer, String, Boolean, Float, Date, ForeignKey
+from sqlalchemy.orm import relationship
+from sqlalchemy.ext.declarative import declarative_base
+
+Base = declarative_base()
+
+class Worker(Base):
+    """Modelo que representa a un trabajador de la empresa."""
+    
+    __tablename__ = 'workers'
+    
+    id = Column(Integer, primary_key=True)
+    name = Column(String(100), nullable=False)
+    rut = Column(String(20), nullable=False, unique=True)
+    address = Column(String(255))
+    phone = Column(String(20))
+    email = Column(String(100))
+    position = Column(String(100))  # Cargo
+    department = Column(String(100))  # Departamento
+    contract_type = Column(String(50))  # NUEVO: Tipo de contrato (por día, producción o contrato)
+    hire_date = Column(Date)  # Fecha de contratación
+    salary = Column(Float)  # Salario o remuneración
+    is_active = Column(Boolean, default=True)
+    notes = Column(String(500))
+    
+    # Datos bancarios
+    bank_name = Column(String(100))  # Mantener para compatibilidad con versiones anteriores
+    account_type = Column(String(50))  # Mantener para compatibilidad con versiones anteriores
+    account_number = Column(String(50))  # Mantener para compatibilidad con versiones anteriores
+    account_holder = Column(String(100))  # Mantener para compatibilidad con versiones anteriores
+    account_holder_rut = Column(String(20))  # Mantener para compatibilidad con versiones anteriores
+    
+    # Relación con cuentas bancarias
+    bank_accounts = relationship("BankAccount", back_populates="worker", cascade="all, delete-orphan")
+    
+    def __repr__(self):
+        return f"<Worker(name='{self.name}', position='{self.position}')>"
 
 
-@dataclass
-class Worker:
-    """Clase que representa un trabajador en el sistema."""
-    name: str
-    document_id: str = ""  # DNI/NIE
-    phone: str = ""
-    address: str = ""
-    active: bool = True
-    start_date: Optional[date] = None
-    end_date: Optional[date] = None
-    notes: str = ""
-    payment_info: Dict[str, Any] = field(default_factory=dict)
-    materials: List[str] = field(default_factory=list)
-    id: Optional[int] = None
+class BankAccount(Base):
+    """Modelo que representa una cuenta bancaria de un trabajador."""
     
-    def to_dict(self) -> Dict[str, Any]:
-        """Convierte el objeto a un diccionario para almacenamiento."""
-        data = asdict(self)
-        # Convertir dates a string para almacenamiento
-        if data['start_date'] is not None:
-            data['start_date'] = data['start_date'].isoformat()
-        if data['end_date'] is not None:
-            data['end_date'] = data['end_date'].isoformat()
-        
-        # Eliminar ID si es None para permitir autoincremento en BD
-        if data['id'] is None:
-            del data['id']
-        return data
+    __tablename__ = 'worker_bank_accounts'
     
-    @classmethod
-    def from_dict(cls, data: Dict[str, Any]) -> 'Worker':
-        """Crea una instancia de Worker desde un diccionario."""
-        # Copia del diccionario para no modificar el original
-        worker_data = data.copy()
-        
-        # Convertir fechas de string a date si existen
-        if 'start_date' in worker_data and worker_data['start_date']:
-            if isinstance(worker_data['start_date'], str):
-                worker_data['start_date'] = date.fromisoformat(worker_data['start_date'])
-        
-        if 'end_date' in worker_data and worker_data['end_date']:
-            if isinstance(worker_data['end_date'], str):
-                worker_data['end_date'] = date.fromisoformat(worker_data['end_date'])
-        
-        # Inicializar listas y diccionarios si no existen
-        if 'payment_info' not in worker_data:
-            worker_data['payment_info'] = {}
-        
-        if 'materials' not in worker_data:
-            worker_data['materials'] = []
-        
-        # Filtrar solo las claves que corresponden a atributos de Worker
-        valid_keys = cls.__dataclass_fields__.keys()
-        filtered_data = {k: v for k, v in worker_data.items() if k in valid_keys}
-        
-        return cls(**filtered_data)
+    id = Column(Integer, primary_key=True)
+    worker_id = Column(Integer, ForeignKey('workers.id'), nullable=False)
+    worker = relationship("Worker", back_populates="bank_accounts")
+    
+    is_primary = Column(Boolean, default=False)  # Indica si es la cuenta principal
+    bank_name = Column(String(100))
+    account_type = Column(String(50))
+    account_number = Column(String(50))
+    account_holder = Column(String(100))
+    account_holder_rut = Column(String(20))
+    
+    def __repr__(self):
+        return f"<BankAccount(bank='{self.bank_name}', number='{self.account_number}')>"
